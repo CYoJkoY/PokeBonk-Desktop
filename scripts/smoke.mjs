@@ -22,15 +22,20 @@ try {
     const before = await api.display();
     let invalidRejected = false;
     try { await api.setDisplay({ discord: 'false' }); } catch { invalidRejected = true; }
-    const after = await api.setDisplay({ mode: 'window', discord: false });
+    const after = await api.setDisplay({ mode: 'window', size: '1280x720', discord: false, vsync: false, angle: 'gl' });
     const unsubscribe = api.update.onChange(() => {});
     const unsubscribeAvailable = typeof unsubscribe === 'function';
     unsubscribe();
-    return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable };
+    // Let native resizing and the trailing persistence task settle. CI desktops
+    // may clamp requested sizes to their available work area.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable,
+      windowBounds: { width: outerWidth, height: outerHeight } };
   `);
-  const electronArgs = ['.', `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
+  const packaged = process.argv[2];
+  const electronArgs = [...(packaged ? [] : ['.']), `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
   if (process.platform === 'linux') electronArgs.push('--no-sandbox');
-  const child = spawn(require('electron'), electronArgs, { stdio: 'inherit', windowsHide: true });
+  const child = spawn(packaged ? resolve(packaged) : require('electron'), electronArgs, { stdio: 'inherit', windowsHide: true });
   const code = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => { child.kill(); reject(new Error('Electron smoke test exceeded 45 seconds')); }, 45_000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
@@ -41,9 +46,24 @@ try {
   assert.equal(report.script?.version, require('../package.json').version);
   assert.equal(report.script?.invalidRejected, true);
   assert.equal(report.script?.after.discord, false);
+  assert.equal(report.script?.after.vsyncNext, false);
+  assert.equal(report.script?.after.angleNext, 'gl');
   assert.equal(report.script?.after.mode, 'window');
   assert.equal(report.script?.fullscreen, false);
   assert.equal(report.script?.unsubscribeAvailable, true);
   assert.ok(report.webgl?.desktop?.includes('setDisplay'));
+  const settings = JSON.parse(readFileSync(join(output, 'profile', 'client.json'), 'utf8'));
+  assert.equal(settings.discord, false);
+  assert.equal(settings.vsync, false);
+  assert.equal(settings.angle, 'gl');
+  const bounds = JSON.parse(readFileSync(join(output, 'profile', 'window.json'), 'utf8'));
+  // Compare observed logical bounds, including native decorations and clamping.
+  for (const key of ['width', 'height']) {
+    const observed = report.script.windowBounds[key];
+    assert.ok(Number.isSafeInteger(observed) && observed > 0);
+    assert.ok(Math.abs(bounds[key] - observed) <= 2,
+      `Saved ${key} ${bounds[key]} differs from observed ${observed}`);
+  }
+  assert.equal(bounds.fullscreen, false);
   console.log(`Electron smoke test passed: ${output}`);
 } finally { server.closeAllConnections(); server.close(); }

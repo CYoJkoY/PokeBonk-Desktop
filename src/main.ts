@@ -13,6 +13,7 @@ import { anglesFor, parseDisplayPatch, SPLASH_ART, type Angle, type ClientCfg, t
 import { createNavigationPolicy } from './domain/navigation';
 import { fileSettings } from './adapters/settings-file';
 import { desktopBridge } from './adapters/bridge';
+import { coalescedTask } from './adapters/coalesced-task';
 import { parseDistribution } from './domain/distribution';
 import { parseWindowState, type WinState } from './domain/window-state';
 import { langOf, tips, tr, type Lang } from './text';
@@ -204,9 +205,10 @@ function createWindow() {
   if (st.fullscreen) w.setFullScreen(true);
   // From the event, not isFullScreen(): on Windows it still says the old state while they fire.
   for (const on of [true, false]) w.on((on ? 'enter-full-screen' : 'leave-full-screen') as 'enter-full-screen', () => { if (!wc.isDestroyed()) wc.send('pb:fs', on); });
-  for (const ev of ['resize', 'move', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize'] as const) w.on(ev as 'resize', () => saveState(w));
-  w.on('close', () => saveState(w));
-  w.on('closed', () => { hideSplash(w, false); win = null; });
+  const persistState = coalescedTask(() => { if (!w.isDestroyed()) saveState(w); });
+  for (const ev of ['resize', 'move', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize'] as const) w.on(ev as 'resize', persistState.schedule);
+  w.on('close', persistState.flush);
+  w.on('closed', () => { persistState.cancel(); hideSplash(w, false); win = null; });
 
   // The browser's user agent plus our tag (reports tell the client apart). Electron adds «PokéBonk/1.0.0 Electron/…»:
   // a non-ASCII name in an HTTP header, so out.
@@ -456,6 +458,7 @@ type DisplayState = {
 const SIZES = [[1280, 720], [1600, 900], [1920, 1080], [2560, 1440], [3200, 1800], [3840, 2160]];
 const displays = () => [...screen.getAllDisplays()].sort((a, b) => a.bounds.x - b.bounds.x || a.bounds.y - b.bounds.y);
 function displayState(w: BrowserWindow): DisplayState {
+  const cfg = readCfg();
   const list = displays(), on = screen.getDisplayMatching(w.getBounds()), primary = screen.getPrimaryDisplay().id;
   // Sizes are real pixels (what players know: 1920×1080), the window works in scaled ones (125 % on many laptops).
   const k = on.scaleFactor, wa = on.workAreaSize, [cw, ch] = w.getContentSize().map((v) => Math.round(v * k));
@@ -471,11 +474,11 @@ function displayState(w: BrowserWindow): DisplayState {
       primary: d.id === primary,
     })),
     vsync: launchCfg.vsync,
-    vsyncNext: readCfg().vsync,
+    vsyncNext: cfg.vsync,
     angle: launchCfg.angle,
-    angleNext: readCfg().angle,
+    angleNext: cfg.angle,
     angles: ANGLES,
-    discord: readCfg().discord,
+    discord: cfg.discord,
   };
 }
 /** Resolves once the window has left (or entered) fullscreen, or after 1.5 s. */
@@ -487,9 +490,12 @@ const fsSettled = (w: BrowserWindow, on: boolean) => new Promise<void>((res) => 
   w.once(ev, done);
 });
 async function setDisplay(w: BrowserWindow, p: DisplayPatch) {
-  if (p.discord !== undefined) { writeCfg({ discord: !!p.discord }); presence.enable(!!p.discord); }
-  if (p.vsync !== undefined) writeCfg({ vsync: !!p.vsync });
-  if (p.angle !== undefined && (ANGLES as string[]).includes(p.angle)) writeCfg({ angle: p.angle as Angle });
+  const cfg: Partial<ClientCfg> = {};
+  if (p.discord !== undefined) cfg.discord = p.discord;
+  if (p.vsync !== undefined) cfg.vsync = p.vsync;
+  if (p.angle !== undefined) cfg.angle = p.angle;
+  if (Object.keys(cfg).length) writeCfg(cfg);
+  if (p.discord !== undefined) presence.enable(p.discord);
   if (p.monitor !== undefined) {
     const d = displays()[p.monitor];
     if (d && d.id !== screen.getDisplayMatching(w.getBounds()).id) {
@@ -603,7 +609,7 @@ function selftest(w: BrowserWindow, dir: string) {
 
 // ---------------- app ----------------
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.focus(); } });
-app.on('before-quit', () => { /* closing goes through the window's beforeunload (the run dialog) */ });
+app.on('will-quit', () => presence.enable(false));
 app.on('window-all-closed', () => app.quit());
 app.whenReady().then(() => {
   if (process.platform === 'darwin') {
