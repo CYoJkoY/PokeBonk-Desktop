@@ -100,6 +100,9 @@ Final local verification on Windows:
 
 The smoke test intentionally submits an invalid Discord setting and observes
 its rejection; Electron logs that expected error while the test passes.
+Saved window dimensions are compared against observed logical outer bounds
+after native resize and trailing persistence settle; CI window managers can
+clamp the requested preset to the available desktop work area.
 
 macOS/Linux CI, the real Discord client, sustained gameplay and installed
 updater cycles require their respective environments. No claims of improved

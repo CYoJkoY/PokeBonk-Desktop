@@ -26,7 +26,11 @@ try {
     const unsubscribe = api.update.onChange(() => {});
     const unsubscribeAvailable = typeof unsubscribe === 'function';
     unsubscribe();
-    return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable };
+    // Let native resizing and the trailing persistence task settle. CI desktops
+    // may clamp requested sizes to their available work area.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable,
+      windowBounds: { width: outerWidth, height: outerHeight } };
   `);
   const packaged = process.argv[2];
   const electronArgs = [...(packaged ? [] : ['.']), `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
@@ -53,11 +57,13 @@ try {
   assert.equal(settings.vsync, false);
   assert.equal(settings.angle, 'gl');
   const bounds = JSON.parse(readFileSync(join(output, 'profile', 'window.json'), 'utf8'));
-  // Saved bounds use logical pixels; the requested preset uses physical pixels.
-  const scale = Number(report.webgl.screen.split('@')[1]);
-  assert.ok(Number.isFinite(scale) && scale > 0);
-  assert.ok(bounds.width >= Math.max(960, Math.round(1280 / scale)));
-  assert.ok(bounds.height >= Math.max(540, Math.round(720 / scale)));
+  // Compare observed logical bounds, including native decorations and clamping.
+  for (const key of ['width', 'height']) {
+    const observed = report.script.windowBounds[key];
+    assert.ok(Number.isSafeInteger(observed) && observed > 0);
+    assert.ok(Math.abs(bounds[key] - observed) <= 2,
+      `Saved ${key} ${bounds[key]} differs from observed ${observed}`);
+  }
   assert.equal(bounds.fullscreen, false);
   console.log(`Electron smoke test passed: ${output}`);
 } finally { server.closeAllConnections(); server.close(); }
