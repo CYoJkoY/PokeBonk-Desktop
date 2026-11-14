@@ -1,7 +1,7 @@
 {
   "name": "pokebonk-desktop",
   "productName": "PokéBonk",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "packageManager": "bun@1.4.4",
   "engines": { "node": "26.13.1", "bun": "1.4.4" },
   "trustedDependencies": ["electron"],

@@ -28,7 +28,9 @@ try {
     unsubscribe();
     return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable };
   `);
-  const child = spawn(require('electron'), ['.', `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'], { stdio: 'inherit', windowsHide: true });
+  const electronArgs = ['.', `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
+  if (process.platform === 'linux') electronArgs.push('--no-sandbox');
+  const child = spawn(require('electron'), electronArgs, { stdio: 'inherit', windowsHide: true });
   const code = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => { child.kill(); reject(new Error('Electron smoke test exceeded 45 seconds')); }, 45_000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
