@@ -1,5 +1,5 @@
-# PokéBonk desktop client (docs/DESKTOP.md in the game's repo). This repo (CharcherGit/pokebonk-app) holds the client's source, a copy
-# of the game repo's desktop/ folder (`npm run sync:repo` there), and its downloads. A tag `v*` builds Windows, macOS and Linux on
+# PokéBonk desktop fork (docs/RUNTIME.md). This repo holds the client's source
+# and its downloads. A tag `v*` builds Windows, macOS and Linux on
 # GitHub's machines and leaves everything in a DRAFT release of that tag: the installers plus latest*.yml and the .blockmap files the
 # automatic updater reads (src/updater.ts). Publishing the draft is what makes the clients update. Also by hand (Actions → Release →
 # Run workflow): the installers stay as the run's artifacts.
@@ -31,14 +31,20 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run build
+          node-version: '26.13.1'
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.4.4'
+      - run: bun install --frozen-lockfile
+      - run: bun run verify
+      - run: bun run build
       # No certificates: ad-hoc signature on the Mac (electron-builder.yml) and none on Windows.
-      - run: npx electron-builder ${{ matrix.target }} --publish never
+      - run: bun run electron-builder ${{ matrix.target }} --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check packaged application contents
+        if: runner.os == 'Windows'
+        run: bun run verify:package
       # The DMG as players get it: the helpers must have exactly the bytes of CFBundleName, and the app must start and quit by itself.
       - name: Check the macOS app from the DMG
         if: runner.os == 'macOS'
