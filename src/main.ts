@@ -4,12 +4,19 @@
  * the browser settings the players can't get right by themselves: the dedicated GPU, hardware acceleration always on,
  * no throttling in the background or behind another window, real fullscreen and a window of its own.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, powerSaveBlocker, screen, session, shell, WebContentsView, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, Menu, powerSaveBlocker, screen, session, shell, WebContentsView, type WebContents } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { anglesFor, parseDisplayPatch, SPLASH_ART, type Angle, type ClientCfg, type DisplayPatch, isRecord } from './domain/config';
+import { createNavigationPolicy } from './domain/navigation';
+import { fileSettings } from './adapters/settings-file';
+import { desktopBridge } from './adapters/bridge';
+import { parseDistribution } from './domain/distribution';
+import { parseWindowState, type WinState } from './domain/window-state';
 import { langOf, tips, tr, type Lang } from './text';
-import { DISCORD_APP_ID, DiscordPresence, remoteAppId, type Activity } from './discord';
+import { DiscordPresence, type Activity } from './discord';
 import { startUpdater } from './updater';
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -17,11 +24,17 @@ const flag = (name: string) => process.argv.includes(`--${name}`);
 
 /** The game. `--url=http://localhost:5173` points the client at `npm run dev`. */
 const GAME_URL = (arg('url') ?? process.env.POKEBONK_URL ?? 'https://pokebonk.com').replace(/\/$/, '');
-const GAME = new URL(GAME_URL);
-/** Same site: the game's domain, its www and its subdomains (api.). Anything else opens in the system browser. */
-const ownHost = (h: string) => h === GAME.hostname || h.endsWith('.' + GAME.hostname.replace(/^www\./, ''));
+const navigation = createNavigationPolicy(GAME_URL, pathToFileURL(join(__dirname, '..', 'static', 'offline.html')).href);
+const sameSite = navigation.isGame;
 const SELFTEST = arg('selftest');
+// Diagnostics never read or overwrite a player's profile or live window settings.
+if (SELFTEST) {
+  const profile = resolve(SELFTEST, 'profile');
+  mkdirSync(profile, { recursive: true });
+  app.setPath('userData', profile);
+}
 const DEVTOOLS = flag('devtools') || !app.isPackaged;
+const distribution = parseDistribution(JSON.parse(readFileSync(join(__dirname, '..', 'client.json'), 'utf8')) as unknown);
 
 // ---------------- GPU and scheduling (before `ready`: Chromium reads them when it starts) ----------------
 // Hybrid laptops (Optimus, MacBook Pro with two GPUs): Chromium asks for the integrated one unless told otherwise.
@@ -46,26 +59,16 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
  * V-Sync is a Chromium switch, so it applies on the next launch: off, frames are not tied to the monitor
  * (more FPS than its refresh, with tearing) and the game's «Límite de FPS» is the only cap.
  */
-type ClientCfg = { vsync: boolean; angle: Angle; lastArt?: string; discord: boolean };
-const cfgFile = () => join(app.getPath('userData'), 'client.json');
-const CFG0: ClientCfg = { vsync: true, angle: 'auto', discord: true };
-function readCfg(): ClientCfg {
-  try {
-    const c = { ...CFG0, ...(JSON.parse(readFileSync(cfgFile(), 'utf8')) as Partial<ClientCfg>) };
-    return { ...c, angle: ANGLES.includes(c.angle) ? c.angle : 'auto' };
-  } catch { return { ...CFG0 }; }
-}
-function writeCfg(p: Partial<ClientCfg>) {
-  try { mkdirSync(app.getPath('userData'), { recursive: true }); writeFileSync(cfgFile(), JSON.stringify({ ...readCfg(), ...p })); } catch { /* read-only profile */ }
-}
+const ANGLES = anglesFor(process.platform);
+const settings = fileSettings(join(app.getPath('userData'), 'client.json'), ANGLES, (message, error) => console.warn('[settings]', message, error));
+const readCfg = () => settings.read();
+const writeCfg = (patch: Partial<ClientCfg>) => settings.write(patch);
 
 /**
  * Graphics backend (Ajustes → Pantalla → Motor gráfico): which API ANGLE turns WebGL into. «auto» is Chromium's
  * choice (Direct3D 11 on Windows, Metal on macOS, OpenGL on Linux); some drivers crash or draw black with it and run
  * fine with another. A Chromium switch, so it applies on the next launch, like V-Sync.
  */
-type Angle = 'auto' | 'd3d11' | 'gl' | 'vulkan' | 'metal';
-const ANGLES: Angle[] = process.platform === 'win32' ? ['auto', 'd3d11', 'gl', 'vulkan'] : process.platform === 'darwin' ? ['auto', 'metal', 'gl'] : ['auto', 'gl', 'vulkan'];
 /** The backend to offer after the GPU process keeps crashing with the current one. */
 const angleFallback = (a: Angle): Angle => (process.platform === 'win32' ? (a === 'gl' ? 'd3d11' : 'gl') : process.platform === 'darwin' ? (a === 'gl' ? 'metal' : 'gl') : (a === 'vulkan' ? 'gl' : 'vulkan'));
 const ANGLE_NAMES: Record<Angle, string> = { auto: 'Auto', d3d11: 'Direct3D 11', gl: 'OpenGL', vulkan: 'Vulkan', metal: 'Metal' };
@@ -96,6 +99,10 @@ if (launchCfg.angle !== 'auto') {
   app.commandLine.appendSwitch('use-angle', launchCfg.angle);
   // Vulkan needs its feature on as well in this Chromium.
   if (launchCfg.angle === 'vulkan') app.commandLine.appendSwitch('enable-features', 'Vulkan');
+  // ANGLE Vulkan can render correctly while DirectComposition presents a solid gray
+  // window on Windows. Keep hardware Vulkan rendering and use the other presentation
+  // path; capturePage() alone cannot detect this failure.
+  if (launchCfg.angle === 'vulkan' && process.platform === 'win32') app.commandLine.appendSwitch('disable-direct-composition');
 }
 
 /**
@@ -104,7 +111,7 @@ if (launchCfg.angle !== 'auto') {
  * and never overwrite a choice the player made there.
  */
 function preferDedicatedGpuOnWindows() {
-  if (process.platform !== 'win32' || !app.isPackaged) return;
+  if (process.platform !== 'win32' || !app.isPackaged || SELFTEST) return;
   const key = 'HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences', exe = process.execPath;
   try {
     execFileSync('reg', ['query', key, '/v', exe], { stdio: 'ignore', windowsHide: true });
@@ -123,11 +130,10 @@ if (process.platform === 'win32') app.setAppUserModelId('com.pokebonk.desktop');
 if (!SELFTEST && !app.requestSingleInstanceLock()) app.exit(0);
 
 // ---------------- window state ----------------
-type WinState = { x?: number; y?: number; width: number; height: number; maximized?: boolean; fullscreen?: boolean };
 const stateFile = () => join(app.getPath('userData'), 'window.json');
 function loadState(): WinState {
   try {
-    const s = JSON.parse(readFileSync(stateFile(), 'utf8')) as WinState;
+    const s = parseWindowState(JSON.parse(readFileSync(stateFile(), 'utf8')) as unknown);
     // A window saved on a monitor that is no longer there opens on the main one.
     const visible = s.x !== undefined && s.y !== undefined && screen.getAllDisplays().some((d) => {
       const a = d.workArea;
@@ -154,6 +160,7 @@ async function langNow(wc: WebContents | undefined): Promise<Lang> {
 // ---------------- the window ----------------
 let win: BrowserWindow | null = null;
 let quitting = false;
+const bridge = desktopBridge(() => win, navigation);
 
 function createWindow() {
   const st = loadState();
@@ -199,7 +206,7 @@ function createWindow() {
   for (const on of [true, false]) w.on((on ? 'enter-full-screen' : 'leave-full-screen') as 'enter-full-screen', () => { if (!wc.isDestroyed()) wc.send('pb:fs', on); });
   for (const ev of ['resize', 'move', 'enter-full-screen', 'leave-full-screen', 'maximize', 'unmaximize'] as const) w.on(ev as 'resize', () => saveState(w));
   w.on('close', () => saveState(w));
-  w.on('closed', () => { win = null; });
+  w.on('closed', () => { hideSplash(w, false); win = null; });
 
   // The browser's user agent plus our tag (reports tell the client apart). Electron adds «PokéBonk/1.0.0 Electron/…»:
   // a non-ASCII name in an HTTP header, so out.
@@ -230,7 +237,10 @@ function createWindow() {
 
   // Links to other sites (Discord, X, credits, legal pages elsewhere) open in the system browser, never in here.
   wc.setWindowOpenHandler(({ url }) => { openOutside(url); return { action: 'deny' }; });
-  wc.on('will-navigate', (e, url) => { if (!sameSite(url) && !url.startsWith('file:')) { e.preventDefault(); openOutside(url); } });
+  const guardNavigation = (e: Electron.Event, url: string) => { if (!navigation.mayNavigate(url)) { e.preventDefault(); openOutside(url); } };
+  wc.on('will-navigate', guardNavigation);
+  wc.on('will-redirect', guardNavigation);
+  wc.on('will-attach-webview', e => e.preventDefault());
 
   // Leaving during a run: the game's beforeunload asks, and Electron shows nothing by itself. Our own dialog.
   // The handler must answer at once (no await), so the game's language is kept up to date beforehand.
@@ -277,9 +287,6 @@ function setFullscreen(w: BrowserWindow, on: boolean) {
   w.setFullScreen(on);
 }
 
-const sameSite = (url: string) => {
-  try { const u = new URL(url); return (u.protocol === GAME.protocol && ownHost(u.hostname)) || u.origin === GAME.origin; } catch { return false; }
-};
 function openOutside(url: string) {
   try { const u = new URL(url); if (u.protocol === 'https:' || u.protocol === 'http:' || u.protocol === 'mailto:') void shell.openExternal(u.toString()); } catch { /* not a URL */ }
 }
@@ -301,7 +308,6 @@ async function showOffline(w: BrowserWindow, why: 'off' | 'crash') {
  */
 const SPLASH = !SELFTEST || flag('splash');
 /** Captures of the game itself (art/source/desktop/captures, docs/ART.md): the four legendary shrines and a horde. */
-const SPLASH_ART = ['forest', 'coast', 'glacier', 'desert', 'horde'];
 let splash: { view: WebContentsView; lang: Lang; p: number; fit: () => void; since: number } | null = null;
 
 function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
@@ -318,7 +324,7 @@ function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
   writeCfg({ lastArt: img });
   const q = new URLSearchParams({ lang, img, tips: JSON.stringify(tips(lang)), tip: tr(lang, 'tip'), label: tr(lang, 'connecting'), ver: app.getVersion() });
   let shown = false;
-  const ready = () => { if (!shown) { shown = true; onReady?.(); } };
+  const ready = () => { if (!shown && !w.isDestroyed()) { shown = true; onReady?.(); } };
   view.webContents.once('did-finish-load', ready);
   setTimeout(ready, 1500);
   void view.webContents.loadFile(join(__dirname, '..', 'static', 'splash.html'), { search: q.toString() }).catch(ready);
@@ -337,7 +343,7 @@ function hideSplash(w: BrowserWindow, fade = true) {
   const drop = () => {
     w.off('resize', s.fit);
     if (!w.isDestroyed()) { w.contentView.removeChildView(s.view); w.webContents.focus(); }
-    s.view.webContents.close();
+    if (!s.view.webContents.isDestroyed()) s.view.webContents.close();
   };
   if (!fade) return drop();
   void s.view.webContents.executeJavaScript('window.pb && pb.out()').catch(() => {});
@@ -350,8 +356,9 @@ function hideSplash(w: BrowserWindow, fade = true) {
  */
 function watchBoot(w: BrowserWindow) {
   const wc = w.webContents;
+  const observed = splash;
   const tick = async () => {
-    if (!splash || w.isDestroyed() || !sameSite(wc.getURL())) return;
+    if (!observed || splash !== observed || w.isDestroyed() || !sameSite(wc.getURL())) return;
     const s = await wc.executeJavaScript(`(() => {
       const ui = document.getElementById('ui');
       const ld = ui && ui.querySelector(':scope > .loading');
@@ -360,12 +367,12 @@ function watchBoot(w: BrowserWindow) {
       const m = fill && /scaleX\\(([\\d.]+)\\)/.exec(fill.style.transform);
       return { p: m ? Number(m[1]) : 0, label: label ? label.textContent : '', asks: !bar || !!ld.querySelector('button, .gl-help, .panel') };
     })()`, true).catch(() => null) as { screen?: boolean; p?: number; label?: string; asks?: boolean } | null;
-    if (!splash) return;
+    if (splash !== observed || w.isDestroyed()) return;
     const lang = splash.lang;
     if (s?.screen) {
       splashSet(1, tr(lang, 'starting'));
       // A beat for the menu's first frames under the fade.
-      setTimeout(() => hideSplash(w), 350);
+      setTimeout(() => { if (splash === observed) hideSplash(w); }, 350);
       return;
     }
     if (s?.asks) return hideSplash(w);
@@ -419,8 +426,8 @@ function watchGpu() {
 function permissions() {
   const allowed = new Set(['fullscreen', 'pointerLock', 'keyboardLock', 'clipboard-sanitized-write', 'media']);
   const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((wc, perm, cb, details) => cb(allowed.has(perm) && (sameSite(details.requestingUrl) || wc.getURL().startsWith('file:'))));
-  ses.setPermissionCheckHandler((_wc, perm, origin) => allowed.has(perm) && sameSite(origin));
+  ses.setPermissionRequestHandler((wc, perm, cb, details) => cb(allowed.has(perm) && wc === win?.webContents && sameSite(wc.getURL()) && sameSite(details.requestingUrl)));
+  ses.setPermissionCheckHandler((wc, perm, origin) => wc === win?.webContents && allowed.has(perm) && sameSite(origin));
 }
 
 // ---------------- the page's bridge (preload.ts) ----------------
@@ -479,7 +486,7 @@ const fsSettled = (w: BrowserWindow, on: boolean) => new Promise<void>((res) => 
   const t = setTimeout(done, 1500);
   w.once(ev, done);
 });
-async function setDisplay(w: BrowserWindow, p: { mode?: string; size?: string; monitor?: number; vsync?: boolean; angle?: string; discord?: boolean }) {
+async function setDisplay(w: BrowserWindow, p: DisplayPatch) {
   if (p.discord !== undefined) { writeCfg({ discord: !!p.discord }); presence.enable(!!p.discord); }
   if (p.vsync !== undefined) writeCfg({ vsync: !!p.vsync });
   if (p.angle !== undefined && (ANGLES as string[]).includes(p.angle)) writeCfg({ angle: p.angle as Angle });
@@ -488,16 +495,20 @@ async function setDisplay(w: BrowserWindow, p: { mode?: string; size?: string; m
     if (d && d.id !== screen.getDisplayMatching(w.getBounds()).id) {
       const wasFs = w.isFullScreen();
       if (wasFs) { setFullscreen(w, false); await fsSettled(w, false); }
+      if (w.isDestroyed()) return null;
       if (w.isMaximized()) w.unmaximize();
       const a = d.workArea, [ow, oh] = w.getSize(), ww = Math.min(ow, a.width), hh = Math.min(oh, a.height);
       w.setBounds({ x: a.x + Math.round((a.width - ww) / 2), y: a.y + Math.round((a.height - hh) / 2), width: ww, height: hh });
       if (wasFs) { setFullscreen(w, true); await fsSettled(w, true); }
     }
   }
+  if (w.isDestroyed()) return null;
   if (p.mode === 'fullscreen') { setFullscreen(w, true); await fsSettled(w, true); }
+  if (w.isDestroyed()) return null;
   if (p.mode === 'window' || p.size) {
     setFullscreen(w, false); await fsSettled(w, false);
   }
+  if (w.isDestroyed()) return null;
   if (p.size === 'max') w.maximize();
   else if (p.size && /^\d+x\d+$/.test(p.size)) {
     const [sw, sh] = p.size.split('x').map(Number), k = screen.getDisplayMatching(w.getBounds()).scaleFactor;
@@ -508,12 +519,19 @@ async function setDisplay(w: BrowserWindow, p: { mode?: string; size?: string; m
   saveState(w);
   return displayState(w);
 }
-ipcMain.handle('pb:display', () => (win ? displayState(win) : null));
-ipcMain.handle('pb:setDisplay', (_e, p) => (win ? setDisplay(win, p ?? {}) : null));
-ipcMain.on('pb:relaunch', () => { app.relaunch(); win?.close(); });
-ipcMain.on('pb:fullscreen', (e) => { e.returnValue = !!win?.isFullScreen(); });
-ipcMain.on('pb:quit', () => { win?.close(); });
-ipcMain.on('pb:retry', () => { if (win && !win.isDestroyed()) void win.loadURL(GAME_URL); });
+bridge.handle('pb:display', () => (win ? displayState(win) : null));
+// Serialize display transitions: monitor/fullscreen operations must not interleave.
+let displayQueue: Promise<unknown> = Promise.resolve();
+bridge.handle('pb:setDisplay', value => {
+  const patch = parseDisplayPatch(value ?? {}, ANGLES), target = win;
+  const next = displayQueue.then(() => target && !target.isDestroyed() ? setDisplay(target, patch) : null);
+  displayQueue = next.catch(error => console.warn('[display]', error));
+  return next;
+});
+bridge.on('pb:relaunch', () => { app.relaunch(); win?.close(); });
+bridge.fullscreen();
+bridge.on('pb:quit', () => { win?.close(); });
+bridge.on('pb:retry', () => { if (win && !win.isDestroyed()) void win.loadURL(GAME_URL); }, true);
 
 // ---------------- Discord Rich Presence (discord.ts) ----------------
 /**
@@ -521,7 +539,7 @@ ipcMain.on('pb:retry', () => { if (win && !win.isDestroyed()) void win.loadURL(G
  * going on (`pokebonkDesktop.presence`, src/core/desktop.ts): menu, the Pokémon and zone of the run, the minute. Images only from the
  * game's own site; texts cut to Discord's 128 characters.
  */
-const presence = new DiscordPresence(DISCORD_APP_ID);
+const presence = new DiscordPresence(process.env.POKEBONK_DISCORD_ID ?? distribution.discordAppId);
 const launchedAt = Date.now();
 const SITE = 'https://pokebonk.com';
 function baseActivity(l: Lang): Activity {
@@ -529,11 +547,11 @@ function baseActivity(l: Lang): Activity {
 }
 const clean = (v: unknown) => (typeof v === 'string' && v.trim().length >= 2 ? v.trim().slice(0, 128) : undefined);
 const img = (v: unknown) => { try { const u = new URL(String(v)); return u.protocol === 'https:' && (u.hostname === 'pokebonk.com' || u.hostname.endsWith('.pokebonk.com')) ? u.toString() : undefined; } catch { return undefined; } };
-ipcMain.on('pb:presence', (e, p: Record<string, unknown> | null) => {
-  if (!win || e.sender !== win.webContents || !sameSite(e.sender.getURL())) return;
+bridge.on('pb:presence', p => {
+  if (!win) return;
   void langNow(win.webContents).then((l) => {
     const a = baseActivity(l);
-    if (p && typeof p === 'object') {
+    if (isRecord(p)) {
       a.details = clean(p.details);
       a.state = clean(p.state);
       if (typeof p.start === 'number' && p.start > 1.6e12 && p.start <= Date.now() + 60_000) a.start = Math.round(p.start);
@@ -598,8 +616,7 @@ app.whenReady().then(() => {
   if (!SELFTEST) {
     presence.set(baseActivity(langOf(app.getPreferredSystemLanguages()[0] ?? app.getLocale())));
     presence.enable(readCfg().discord);
-    if (!process.env.POKEBONK_DISCORD_ID) void remoteAppId().then((id) => { if (id) presence.useApp(id); });
-    startUpdater(() => win, () => { quitting = true; });
+    startUpdater(() => win, () => { quitting = true; }, bridge, distribution.updates);
   }
   app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
 });

@@ -11,18 +11,22 @@ directories:
 files:
   - out/main.js
   - out/preload.js
-  - out/text.js
   - out/discord.js
   - out/updater.js
+  - out/text.js
+  - out/domain/**/*.js
+  - out/adapters/**/*.js
+  - out/ports/**/*.js
   - static/**
   - build/icon.png
   - package.json
+  - client.json
 # Automatic updates (src/updater.ts, docs/DESKTOP.md): electron-updater reads latest.yml / latest-linux.yml from the latest release
-# of the public downloads repo. `--publish never` still writes app-update.yml into the app and the .yml files next to the installers.
+# of this distribution. client.json explicitly controls runtime opt-in. `--publish never` still writes update metadata.
 publish:
   provider: github
-  owner: CharcherGit
-  repo: pokebonk-app
+  owner: CYoJkoY
+  repo: PokeBonk-Desktop
   releaseType: release
 asar: true
 compression: maximum

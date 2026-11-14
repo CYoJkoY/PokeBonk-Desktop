@@ -36,7 +36,11 @@ contextBridge.exposeInMainWorld('pokebonkDesktop', {
   /** Automatic updates (1.4.0, updater.ts): the state now, every change, and «install and restart» once it is 'ready'. */
   update: {
     state: () => ipcRenderer.invoke('pb:updateState'),
-    onChange: (cb: (s: unknown) => void) => { ipcRenderer.on('pb:update', (_e, s) => cb(s)); },
+    onChange: (cb: (s: unknown) => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, s: unknown) => cb(s);
+      ipcRenderer.on('pb:update', listener);
+      return () => ipcRenderer.removeListener('pb:update', listener);
+    },
     install: () => ipcRenderer.send('pb:updateInstall'),
   },
 });

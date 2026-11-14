@@ -10,19 +10,8 @@ import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
 
 /**
- * The Discord application whose name is the «Jugando a …» line. Fallback: the server's bot («PokéBonk Bot»). The real one, «PokéBonk»,
- * is read at launch from `client.json` of the downloads repo (`remoteAppId`), so it can change without a new client.
+ * The composition root supplies the Discord application ID from the bundled, validated client.json.
  */
-export const DISCORD_APP_ID = process.env.POKEBONK_DISCORD_ID ?? '1559293304611410001';
-const REMOTE = 'https://raw.githubusercontent.com/CharcherGit/pokebonk-app/main/client.json';
-/** `{ "discordAppId": "…" }` from the downloads repo, or null (no network, GitHub blocked: the fallback stays). */
-export async function remoteAppId(): Promise<string | null> {
-  try {
-    const r = await fetch(REMOTE, { signal: AbortSignal.timeout(6000), cache: 'no-store' });
-    const id = r.ok ? ((await r.json()) as { discordAppId?: unknown }).discordAppId : null;
-    return typeof id === 'string' && /^\d{17,20}$/.test(id) ? id : null;
-  } catch { return null; }
-}
 
 export type Activity = {
   details?: string;
@@ -74,7 +63,7 @@ export class DiscordPresence {
 
   constructor(private appId: string) {}
 
-  /** Another application (remoteAppId): reconnects with it if presence is on. */
+  /** Switch applications and reconnect if presence is on. */
   useApp(id: string) {
     if (id === this.appId) return;
     this.appId = id;

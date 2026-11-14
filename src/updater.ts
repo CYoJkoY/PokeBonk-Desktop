@@ -1,6 +1,6 @@
 /**
- * Automatic client updates (docs/DESKTOP.md, «Actualizaciones del cliente», 1.4.0): electron-updater reads the latest GitHub
- * release of CharcherGit/pokebonk-app (its latest.yml / latest-linux.yml, `publish` in electron-builder.yml), downloads the new
+ * Opt-in client updates: electron-updater reads the configured distribution's latest GitHub
+ * release (latest.yml / latest-linux.yml), downloads the new
  * version in the background and installs it when the player closes the game (or at once, if they press «Reiniciar» in the
  * game's bar). Only where it can work:
  *  - Windows installed with the setup (not the portable .exe, which has no installer to run).
@@ -8,8 +8,10 @@
  *  - Not macOS: Squirrel.Mac only installs updates signed with the same Apple Developer identity, and ours is ad-hoc.
  * Everywhere else the game's bar keeps saying «Descargar» (src/ui/update.ts, `checkDesktopUpdate`).
  */
-import { app, ipcMain, type BrowserWindow } from 'electron';
+import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
+import type { DesktopRequests } from './ports/desktop-requests';
+import type { Distribution } from './domain/distribution';
 
 export type UpdateState = {
   /** off: this install can't update itself. idle: up to date. ready: downloaded, installs on quit. */
@@ -31,16 +33,17 @@ function set(s: UpdateState) {
 }
 
 /** Starts checking (10 s after launch, then every 4 h) if this install can update itself. */
-export function startUpdater(win: () => BrowserWindow | null, beforeInstall: () => void) {
+export function startUpdater(win: () => BrowserWindow | null, beforeInstall: () => void, requests: DesktopRequests, config: Distribution['updates']) {
   getWin = win;
-  ipcMain.handle('pb:updateState', () => st);
-  ipcMain.on('pb:updateInstall', () => {
+  requests.handle('pb:updateState', () => st);
+  requests.on('pb:updateInstall', () => {
     if (st.state !== 'ready') return;
     beforeInstall();
     // Silent (the assisted installer's pages were seen on the first install; it keeps the folder) and opens the game again.
     autoUpdater.quitAndInstall(true, true);
   });
-  if (!canAutoUpdate()) return;
+  if (!config.enabled || !canAutoUpdate()) return;
+  autoUpdater.setFeedURL({ provider: 'github', owner: config.owner, repo: config.repo, releaseType: 'release' });
   st = { state: 'idle' };
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
@@ -55,6 +58,7 @@ export function startUpdater(win: () => BrowserWindow | null, beforeInstall: () 
   // No network, GitHub slow or blocked (China): nothing to tell the player, the next check tries again.
   autoUpdater.on('error', () => { if (st.state !== 'ready') set({ state: 'error' }); });
   const check = () => { if (st.state !== 'ready' && st.state !== 'downloading') autoUpdater.checkForUpdates().catch(() => {}); };
-  setTimeout(check, 10_000);
-  setInterval(check, 4 * 3600_000);
+  const initial = setTimeout(check, 10_000);
+  const interval = setInterval(check, 4 * 3600_000);
+  app.once('will-quit', () => { clearTimeout(initial); clearInterval(interval); });
 }

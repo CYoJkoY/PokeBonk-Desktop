@@ -1,0 +1,49 @@
+# Desktop runtime decision - 1.5.1
+
+## Baseline and decision
+
+Baseline: commit `2191629`, application 1.4.0. The original TypeScript build passed before changes.
+
+Keep Electron 44.7.1 for the game runtime and use Bun 1.4.4 for dependency installation, scripts and unit tests. Node.js 26.13.1 runs development diagnostics and packaging tools; the installed application uses Electron's embedded Node.js. Bun is not a replacement for Electron's main process.
+
+The application hosts a live WebGL game and already depends on Chromium GPU backend selection, background scheduling, fullscreen, permissions, Discord and installer updates. Tauri 2 is a reasonable future candidate for smaller distribution size, but it uses WebView2 on Windows, WKWebView on macOS and WebKitGTK on Linux. A migration needs evidence that the game, audio, authentication and co-op work on each engine, plus replacements for Chromium-specific behavior. No size, FPS or memory improvement is claimed by this change.
+
+References: [Tauri process model](https://v2.tauri.app/concept/process-model/), [Electron security](https://www.electronjs.org/docs/latest/tutorial/security), [Bun trusted dependencies](https://bun.com/guides/install/trusted).
+
+## Boundaries and state ownership
+
+- `src/domain/` contains framework-free navigation, settings, distribution and saved-window validation.
+- `src/ports/` defines settings storage and desktop request capabilities.
+- `src/adapters/` translates file storage and Electron IPC into these ports.
+- `src/main.ts` is the composition root and owns windows, lifecycle and serialized display transitions.
+- `src/preload.ts` exposes the existing desktop API through context isolation. The updater receives the request port rather than registering unvalidated IPC handlers.
+
+The game remains at its original HTTPS origin, retaining the existing profile, account and storage location. Settings names and defaults are preserved. Corrupt individual settings recover to defaults; malformed saved window bounds fall back to a visible window. Settings files are replaced via a temporary file and rename. Write failures are logged.
+
+Privileged requests require the current window, its main frame and the exact configured game origin. Subframes, foreign windows, opaque origins, sibling domains and other ports cannot call them. Only the exact bundled offline document can request retry and read fullscreen state. Embedded webviews are denied; foreign top-level navigation opens externally through the existing link policy. HTTPS is required except for explicit loopback development URLs.
+
+Display patches are validated as a whole before effects and processed in order. Existing valid calls continue to work; unknown keys, invalid booleans, unsupported backends and invalid dimensions now reject. Update subscriptions return an optional unsubscribe function. Diagnostic runs use a separate profile and do not read or write the player's settings.
+
+## Distribution and versions
+
+Application: **1.4.0 -> 1.5.0**, a compatible tooling and shell capability update with stricter validation at trust boundaries. `package.json` and the npm lock root now agree (the old lock incorrectly said 1.3.0). Distribution configuration has its own **schemaVersion 1.0.0**. Existing player settings have no new mandatory schema or migration.
+
+Vulkan presentation fix: **1.5.0 -> 1.5.1** (PATCH). On Windows, selecting ANGLE Vulkan now also sets `--disable-direct-composition`. Vulkan remains the hardware WebGL renderer; GPU compositing remains enabled. Other backends and platforms retain their launch policy. This addresses a reproduced presentation failure on Intel Iris Xe, driver 31.0.101.4032: the game and Electron `capturePage()` rendered normally while the actual fullscreen desktop window was uniformly RGB(32,32,32). Removing the explicit Chromium Vulkan feature alone did not fix it. Disabling DirectComposition did, with and without that feature, so the fix preserves the existing Vulkan feature setting and changes only the Windows presentation path. No driver or system settings are changed by this fix. Performance effects have not been benchmarked.
+
+The bundled `client.json` supplies the Discord application ID and update feed. No remotely downloaded configuration chooses these values. The fork feed is `CYoJkoY/PokeBonk-Desktop`, with updates disabled by default. This prevents installing unrelated upstream binaries. Enabling updates requires a reviewed configuration change and compatible release metadata. Windows setup and Linux AppImage support remain; portable, deb and ad-hoc signed macOS builds do not self-update.
+
+`bun.lock` is the primary frozen dependency lock. `package-lock.json` remains for npm tooling and the optional legacy Docker path. Both retain exact top-level dependency versions; changes must update both. Seven old lock entries had version metadata 1.1.0 while their tarball URLs and integrity identified 1.0.0; metadata now matches the existing tarballs. Electron is the only explicitly trusted Bun lifecycle dependency.
+
+## Validation and delivery
+
+Run `bun install --frozen-lockfile`, `bun run verify`, `bun run smoke` and `git diff --check`. The smoke test starts real Electron against a loopback HTTP fixture and checks preload exposure, display round trips, invalid input rejection and unsubscribe cleanup. Reports and screenshots stay under ignored `out/`; packaging includes only compiled application modules, static assets and distribution configuration.
+
+After building a Windows directory package, run the verify:package script; for another platform, pass its app.asar path to scripts/check-package.mjs. This checks required modules, distribution/version agreement and exclusion of diagnostics.
+
+Local Windows verification on 2026-11-14: frozen install passed; TypeScript and 35 tests (66 assertions) passed; real Electron fixture passed. Windows directory packaging passed using the locally checksum-verified Electron distribution. Source and packaged live-game diagnostics reached the Chinese welcome screen with a canvas, no loading overlay, a working display API and hardware ANGLE/D3D11 on Intel Iris Xe. These are startup assertions, not an FPS benchmark or a full gameplay test. No signing certificate, installer execution or automatic update cycle was tested.
+
+For the 1.5.1 Vulkan regression, run `bun run verify:vulkan` on an interactive Windows desktop, then `node scripts/check-vulkan.mjs release/win-unpacked/PokeBonk.exe` after packaging. Keep the diagnostic window in the foreground on the primary display. The isolated loopback fixture continuously draws red and blue WebGL halves; the check verifies a hardware Vulkan renderer and samples the actual desktop through Windows screen capture, separately from Electron's internal screenshot. The check fails if another application has focus. The old 1.5.0 executable failed with RGB(32,32,32); source and packaged 1.5.1 passed both color assertions. This check requires supported Vulkan hardware and is not part of headless CI. The packaged live game also reached its existing player's menu using a copied profile with Vulkan, fullscreen and the loading overlay; the real desktop capture contained varied game pixels rather than a solid gray surface. The original player profile was not used for diagnostic writes. Sustained gameplay, other GPU vendors and other platforms remain unverified.
+
+The check workflow covers Windows, macOS and Linux (Xvfb); remote results require running that workflow. A local Windows pass cannot establish macOS, Linux, Steam Deck or live gameplay compatibility. Signing, installer updates and sustained gameplay need their respective release environments.
+
+Changes are isolated on `issue-runtime-shell` from `2191629`. Rollback before delivery means using the baseline checkout while preserving the task branch and any player data. A shipped rollback should be a forward patch restoring the previous behavior, with a new version; do not reset shared history or downgrade player data. No release, deployment, merge or tag is performed by development validation.
