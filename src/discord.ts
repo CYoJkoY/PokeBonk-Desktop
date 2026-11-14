@@ -8,6 +8,8 @@
  */
 import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
+import { DiscordFrames } from './adapters/discord-frames';
+import { isRecord } from './domain/config';
 
 /**
  * The composition root supplies the Discord application ID from the bundled, validated client.json.
@@ -56,12 +58,14 @@ export class DiscordPresence {
   private sendTimer: NodeJS.Timeout | null = null;
   private lastSent = 0;
   private want: Activity | null = null;
-  private buf = Buffer.alloc(0);
+  private frames = new DiscordFrames();
+  private pending: Socket | null = null;
+  private connectionTimer: NodeJS.Timeout | null = null;
   /** Bumped on every close: a connection attempt from before it is dropped when it lands. */
   private gen = 0;
   private connecting = false;
 
-  constructor(private appId: string) {}
+  constructor(private appId: string, private endpoints: () => readonly string[] = sockets, private timeoutMs = 5000) {}
 
   /** Switch applications and reconnect if presence is on. */
   useApp(id: string) {
@@ -72,7 +76,7 @@ export class DiscordPresence {
 
   /** Turns presence on or off (Ajustes → Pantalla → «Mostrar en Discord»). Off clears it at once. */
   enable(on: boolean) {
-    if (on === this.on || !this.appId) return;
+    if (on === this.on || (on && !this.appId)) return;
     this.on = on;
     if (on) this.connect();
     else {
@@ -116,43 +120,55 @@ export class DiscordPresence {
   }
 
   private connect() {
-    if (!this.on || this.sock || this.connecting) return;
-    const paths = sockets(), gen = this.gen;
+    if (!this.on || !this.appId || this.sock || this.connecting) return;
+    const paths = this.endpoints(), gen = this.gen;
     this.connecting = true;
     const tryAt = (i: number) => {
-      if (!this.on || gen !== this.gen) { this.connecting = false; return; }
+      if (!this.on || gen !== this.gen) return;
       if (i >= paths.length) { this.connecting = false; return this.later(); }
       const s = connect(paths[i]);
+      this.pending = s;
+      this.connectionTimer = setTimeout(() => s.destroy(), this.timeoutMs);
       let opened = false;
       s.once('connect', () => {
         opened = true;
-        this.connecting = false;
         if (gen !== this.gen || !this.on) { s.destroy(); return; }
+        this.connecting = false;
+        this.pending = null;
+        this.clearConnectionTimer();
         this.sock = s;
-        this.buf = Buffer.alloc(0);
-        s.on('data', (d) => this.read(Buffer.from(d)));
-        s.on('close', () => { if (this.sock === s) this.close(true); });
-        s.on('error', () => { /* 'close' follows */ });
+        this.frames = new DiscordFrames();
+        // A peer can accept a socket without ever completing the handshake.
+        this.connectionTimer = setTimeout(() => { if (this.sock === s) this.close(true); }, this.timeoutMs);
+        s.on('data', (d) => { if (this.sock === s) this.read(Buffer.from(d)); });
         this.send(OP_HANDSHAKE, { v: 1, client_id: this.appId });
       });
-      s.once('error', () => { if (!opened) { s.destroy(); tryAt(i + 1); } });
+      s.on('error', () => { /* close handles both connection and stream failures */ });
+      s.once('close', () => {
+        if (gen !== this.gen) return;
+        if (opened) { if (this.sock === s) this.close(true); }
+        else { this.pending = null; this.clearConnectionTimer(); tryAt(i + 1); }
+      });
     };
     tryAt(0);
   }
 
   private read(d: Buffer) {
-    this.buf = Buffer.concat([this.buf, d]);
-    while (this.buf.length >= 8) {
-      const op = this.buf.readInt32LE(0), len = this.buf.readInt32LE(4);
-      if (this.buf.length < 8 + len) return;
-      let msg: { cmd?: string; evt?: string } = {};
-      try { msg = JSON.parse(this.buf.subarray(8, 8 + len).toString('utf8')); } catch { /* ignore a bad frame */ }
-      if (process.env.POKEBONK_RPC_DEBUG) console.log('[discord]', JSON.stringify(msg).slice(0, 400));
-      this.buf = this.buf.subarray(8 + len);
-      if (op === OP_PING) this.send(OP_PONG, msg);
-      else if (op === OP_CLOSE) { this.close(true); return; }
-      else if (op === OP_FRAME && msg.evt === 'READY') { this.ready = true; this.lastSent = 0; this.schedule(); }
-    }
+    try {
+      for (const { op, data } of this.frames.read(d)) {
+        if (process.env.POKEBONK_RPC_DEBUG) console.log('[discord]', JSON.stringify(data).slice(0, 400));
+        if (op === OP_PING) this.send(OP_PONG, data);
+        else if (op === OP_CLOSE) { this.close(true); return; }
+        else if (op === OP_FRAME && isRecord(data) && data.evt === 'READY') {
+          this.clearConnectionTimer(); this.ready = true; this.lastSent = 0; this.schedule();
+        }
+      }
+    } catch { this.close(true); } // Invalid framing/JSON: drop the stream and retry later.
+  }
+
+  private clearConnectionTimer() {
+    if (this.connectionTimer) clearTimeout(this.connectionTimer);
+    this.connectionTimer = null;
   }
 
   /** Drops the connection; with `again`, tries again later (Discord restarted or was closed). */
@@ -160,6 +176,11 @@ export class DiscordPresence {
     this.ready = false;
     this.gen++;
     this.connecting = false;
+    this.clearConnectionTimer();
+    const pending = this.pending;
+    this.pending = null;
+    pending?.destroy();
+    this.frames = new DiscordFrames();
     if (this.sendTimer) { clearTimeout(this.sendTimer); this.sendTimer = null; }
     const s = this.sock;
     this.sock = null;

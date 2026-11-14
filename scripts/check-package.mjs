@@ -11,7 +11,8 @@ const modules = /^[/]out[/](domain|adapters|ports)[/][^/]+[.]js$/;
 for (const path of paths.filter(path => path.startsWith('/out/') && path.endsWith('.js'))) {
   assert.ok(entrypoints.includes(path) || modules.test(path), 'Unexpected application script: ' + path);
 }
-for (const path of entrypoints.concat(['/out/domain/navigation.js', '/out/adapters/bridge.js', '/client.json'])) {
+for (const path of entrypoints.concat(['/out/domain/navigation.js', '/out/adapters/bridge.js',
+  '/out/adapters/discord-frames.js', '/out/adapters/coalesced-task.js', '/client.json'])) {
   assert.ok(extractFile(archive, normalize(path.slice(1))).length, 'Missing module: ' + path);
 }
 assert.equal(paths.some(path => /^[/](tests|scripts)[/]/.test(path) || /[/]out[/].*(smoke-|selftest|live-probe|[.]zip$)/.test(path)), false, 'Diagnostics must not ship');

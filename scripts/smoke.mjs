@@ -22,15 +22,16 @@ try {
     const before = await api.display();
     let invalidRejected = false;
     try { await api.setDisplay({ discord: 'false' }); } catch { invalidRejected = true; }
-    const after = await api.setDisplay({ mode: 'window', discord: false });
+    const after = await api.setDisplay({ mode: 'window', size: '1280x720', discord: false, vsync: false, angle: 'gl' });
     const unsubscribe = api.update.onChange(() => {});
     const unsubscribeAvailable = typeof unsubscribe === 'function';
     unsubscribe();
     return { version: api.version, fullscreen: api.fullscreen(), before, after, invalidRejected, unsubscribeAvailable };
   `);
-  const electronArgs = ['.', `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
+  const packaged = process.argv[2];
+  const electronArgs = [...(packaged ? [] : ['.']), `--url=http://127.0.0.1:${port}`, `--selftest=${output}`, `--selftest-js=${script}`, '--selftest-wait=1000'];
   if (process.platform === 'linux') electronArgs.push('--no-sandbox');
-  const child = spawn(require('electron'), electronArgs, { stdio: 'inherit', windowsHide: true });
+  const child = spawn(packaged ? resolve(packaged) : require('electron'), electronArgs, { stdio: 'inherit', windowsHide: true });
   const code = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => { child.kill(); reject(new Error('Electron smoke test exceeded 45 seconds')); }, 45_000);
     child.once('error', error => { clearTimeout(timer); reject(error); });
@@ -41,9 +42,22 @@ try {
   assert.equal(report.script?.version, require('../package.json').version);
   assert.equal(report.script?.invalidRejected, true);
   assert.equal(report.script?.after.discord, false);
+  assert.equal(report.script?.after.vsyncNext, false);
+  assert.equal(report.script?.after.angleNext, 'gl');
   assert.equal(report.script?.after.mode, 'window');
   assert.equal(report.script?.fullscreen, false);
   assert.equal(report.script?.unsubscribeAvailable, true);
   assert.ok(report.webgl?.desktop?.includes('setDisplay'));
+  const settings = JSON.parse(readFileSync(join(output, 'profile', 'client.json'), 'utf8'));
+  assert.equal(settings.discord, false);
+  assert.equal(settings.vsync, false);
+  assert.equal(settings.angle, 'gl');
+  const bounds = JSON.parse(readFileSync(join(output, 'profile', 'window.json'), 'utf8'));
+  // Saved bounds use logical pixels; the requested preset uses physical pixels.
+  const scale = Number(report.webgl.screen.split('@')[1]);
+  assert.ok(Number.isFinite(scale) && scale > 0);
+  assert.ok(bounds.width >= Math.max(960, Math.round(1280 / scale)));
+  assert.ok(bounds.height >= Math.max(540, Math.round(720 / scale)));
+  assert.equal(bounds.fullscreen, false);
   console.log(`Electron smoke test passed: ${output}`);
 } finally { server.closeAllConnections(); server.close(); }
