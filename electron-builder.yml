@@ -17,6 +17,7 @@ files:
   - out/domain/**/*.js
   - out/adapters/**/*.js
   - out/ports/**/*.js
+  - out/renderer/**/*.js
   - static/**
   - build/icon.png
   - package.json

@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src/renderer",
+    "outDir": "out/renderer",
+    "module": "esnext",
+    "types": []
+  },
+  "include": ["src/renderer"],
+  "exclude": []
+}

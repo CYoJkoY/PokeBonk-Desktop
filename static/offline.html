@@ -2,7 +2,8 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src file:" />
+<!-- Only the page's own compiled script (out/renderer/offline.js) runs here: no inline script. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file:" />
 <title>PokéBonk</title>
 <style>
   /* Same look as the game's cards (src/ui/theme.css): white card, pill button, striped header. */
@@ -26,18 +27,6 @@
   <p id="text"></p>
   <button id="retry"></button>
 </div></div>
-<script>
-  const q = new URLSearchParams(location.search);
-  document.documentElement.lang = q.get('lang') || 'en';
-  document.getElementById('title').textContent = q.get('title') || '';
-  document.getElementById('text').textContent = q.get('body') || '';
-  const b = document.getElementById('retry');
-  b.textContent = q.get('retry') || 'Retry';
-  const go = () => { b.disabled = true; window.pokebonkDesktop?.retry(); };
-  b.onclick = go;
-  addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') go(); });
-  // Try again by itself every 20 s: a deploy or a short outage comes back on its own.
-  setTimeout(go, 20000);
-</script>
+<script src="../out/renderer/offline.js"></script>
 </body>
 </html>
