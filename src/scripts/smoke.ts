@@ -1,7 +1,8 @@
 /**
  * `bun run smoke`: starts the real Electron client against loopback pages and checks what the pages and the client wrote.
- * Two page flows are covered: the game window with the preload bridge, and the offline page the client shows when the
- * game does not answer (its `<script src>` and the CSP that allows it). Everything it produces stays under `out/`.
+ * Three page flows are covered: the game window with the preload bridge, the offline page the client shows when the game
+ * does not answer, and the loading screen. Every local page runs a compiled `<script src>`, so its CSP has to allow it and
+ * the relative path has to resolve. Everything it produces stays under `out/`.
  */
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -44,6 +45,9 @@ const OFFLINE_PROBE = `
       hasBridge: typeof window.pokebonkDesktop?.retry === 'function',
     };
   `;
+// A boot that never reaches a menu: the loading screen stays up, and src/main.ts keeps pushing its bar through window.pb.
+const BOOT_PAGE = '<!doctype html><html lang=es><title>Loading screen fixture</title><body><div id=ui>'
+  + '<div class=loading><div class=bar><i style="transform:scaleX(0.5)"></i><b>Cargando Pokédex…</b></div></div></div></body></html>';
 
 function integer(value: unknown, what: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value)) throw new Error(`${what} is not an integer: ${String(value)}`);
@@ -80,13 +84,20 @@ async function refusedUrl(): Promise<string> {
   return url;
 }
 
+type ClientRun = { url: string; output: string; probe?: string; wait?: number; splash?: boolean };
+
 /** Runs the real client (or the packaged executable) on `url` until it writes the self-test report. */
-async function runClient(url: string, probe: string, output: string): Promise<Record<string, unknown>> {
+async function runClient({ url, output, probe, wait = 1000, splash = false }: ClientRun): Promise<Record<string, unknown>> {
   mkdirSync(output, { recursive: true });
-  const probeFile = join(output, 'probe.js');
-  writeFileSync(probeFile, probe);
   const packaged = process.argv[2];
-  const args = [...(packaged ? [] : [ROOT]), `--url=${url}`, `--selftest=${output}`, `--selftest-js=${probeFile}`, '--selftest-wait=1000'];
+  const args = [...(packaged ? [] : [ROOT]), `--url=${url}`, `--selftest=${output}`, `--selftest-wait=${wait}`];
+  if (probe) {
+    const probeFile = join(output, 'probe.js');
+    writeFileSync(probeFile, probe);
+    args.push(`--selftest-js=${probeFile}`);
+  }
+  // The loading screen over the game: the report carries the page's own DOM (src/main.ts, `readSplashPage`).
+  if (splash) args.push('--splash');
   if (process.platform === 'linux') args.push('--no-sandbox');
   const child = spawn(packaged ? resolve(ROOT, packaged) : electronBinary(), args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
   const code = await new Promise<number | null>((exited, failed) => {
@@ -133,7 +144,7 @@ async function checkGameWindow(): Promise<void> {
   const output = join(ROOT, 'out', `smoke-${Date.now()}`);
   mkdirSync(join(output, 'profile'), { recursive: true });
   writeFileSync(join(output, 'profile', 'window.json'), JSON.stringify({ width: 960, height: 540, fullscreen: false }));
-  const report = await serve(GAME_PAGE, (url) => runClient(url, BRIDGE_PROBE, output));
+  const report = await serve(GAME_PAGE, (url) => runClient({ url, probe: BRIDGE_PROBE, output }));
   const script = record(report.script, 'report.script');
   checkBridgeReport(report, script);
   checkPersistedProfile(output, script);
@@ -143,7 +154,7 @@ async function checkGameWindow(): Promise<void> {
 /** The page has to run its compiled script: a broken `<script src>` or a CSP that drops `file:` leaves it blank. */
 async function checkOfflinePage(): Promise<void> {
   const output = join(ROOT, 'out', `smoke-offline-${Date.now()}`);
-  const report = await runClient(await refusedUrl(), OFFLINE_PROBE, output);
+  const report = await runClient({ url: await refusedUrl(), probe: OFFLINE_PROBE, output });
   const page = record(report.script, 'report.script');
   assert.equal(page.copiedQuery, true, 'The offline page did not run out/renderer/offline.js');
   assert.equal(page.retryHandler, true, 'The offline page has no retry handler');
@@ -153,9 +164,34 @@ async function checkOfflinePage(): Promise<void> {
   console.log(`Offline page passed: ${output}`);
 }
 
+/**
+ * The loading screen is a local page too: it has to run its own compiled script (its `<script src>`), copy the text the
+ * client puts in the query, load its illustration and answer window.pb while src/main.ts drives the boot.
+ */
+async function checkSplashPage(): Promise<void> {
+  const output = join(ROOT, 'out', `smoke-splash-${Date.now()}`);
+  // Long enough for the illustration and for the boot's bar, which src/main.ts sets on dom-ready and then follows.
+  const report = await serve(BOOT_PAGE, (url) => runClient({ url, output, splash: true, wait: 4000 }));
+  const page = record(report.splashPage, 'report.splashPage');
+  assert.equal(page.bridge, true, 'static/splash.html did not define window.pb');
+  assert.equal(page.ver, `v${packageVersion()}`, 'The loading screen did not show the client version');
+  assert.ok(typeof page.lang === 'string' && page.lang.length > 0, 'The loading screen has no lang');
+  assert.equal(page.tipHidden, false, 'The loading screen shows no tips');
+  for (const key of ['label', 'tipLabel', 'tip'] as const) {
+    assert.ok(typeof page[key] === 'string' && (page[key] as string).length > 0, `The loading screen has no ${key}`);
+  }
+  // The fixture reports its own load at 0.5, so src/main.ts sets 0.2 + 0.72 · 0.5 through window.pb.set.
+  const bar = /^scaleX\(([\d.]+)\)$/.exec(String(page.bar));
+  assert.ok(bar, `The loading screen's bar carries no progress: ${String(page.bar)}`);
+  assert.ok(Math.abs(Number(bar[1]) - 0.56) < 0.01, `window.pb.set did not move the bar to 0.56: ${bar[1]}`);
+  assert.equal(page.revealed, true, 'The loading screen did not load its illustration');
+  console.log(`Loading screen passed: ${output}`);
+}
+
 async function smoke(): Promise<void> {
   await checkGameWindow();
   await checkOfflinePage();
+  await checkSplashPage();
 }
 
 void smoke().catch((error: unknown) => {

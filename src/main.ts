@@ -579,6 +579,20 @@ bridge.on('pb:presence', p => {
 
 let splashGoneMs: number | null = null;
 // ---------------- self-test (`--selftest=<dir>`): GPU report and a screenshot, then quit ----------------
+/** The loading screen's own DOM (`--splash`): proof that static/splash.html ran its compiled script and got its query. */
+async function readSplashPage(): Promise<unknown> {
+  const view = splash?.view;
+  if (!view || view.webContents.isDestroyed()) return null;
+  return view.webContents.executeJavaScript(`(() => {
+    const byId = (id) => document.getElementById(id);
+    return { bridge: typeof window.pb === 'object', lang: document.documentElement.lang,
+      ver: byId('ver')?.textContent ?? null, label: byId('label')?.textContent ?? null,
+      tipLabel: byId('tipLabel')?.textContent ?? null, tip: byId('tipText')?.textContent ?? null,
+      tipHidden: byId('tip')?.hidden ?? null, bar: byId('fill')?.style.transform ?? null,
+      revealed: document.body.classList.contains('in') };
+  })()`, true).catch(() => null);
+}
+
 function selftest(w: BrowserWindow, dir: string) {
   mkdirSync(dir, { recursive: true });
   // With --splash: the loading screen at 0.6, 2 and 4 s (splash-*.png) and how long it took to give way to the menu.
@@ -598,7 +612,7 @@ function selftest(w: BrowserWindow, dir: string) {
     // `--selftest-js=<file>`: an async function body run in the page (with `npm run dev`, window.pokebonk is the App).
     const js = arg('selftest-js');
     const script = js ? await w.webContents.executeJavaScript(`(async () => { ${readFileSync(js, 'utf8')} })()`, true).catch((e) => ({ error: String(e) })) : undefined;
-    const report = { splashGoneMs, script, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, url: w.webContents.getURL(),
+    const report = { splashGoneMs, splashPage: await readSplashPage(), script, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, url: w.webContents.getURL(),
       gpuFeatures: app.getGPUFeatureStatus(), gpu: await app.getGPUInfo('complete').then((g: any) => ({ active: g.gpuDevice?.find((d: any) => d.active)?.deviceString, gl: g.auxAttributes?.glImplementationParts })).catch(() => null), webgl };
     writeFileSync(join(dir, 'report.json'), JSON.stringify(report, null, 2));
     writeFileSync(join(dir, 'screen.png'), (await w.webContents.capturePage()).toPNG());
