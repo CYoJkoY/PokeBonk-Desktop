@@ -38,9 +38,9 @@ The bundled `client.json` supplies the Discord application ID and update feed. N
 
 ## Validation and delivery
 
-Run `bun install --frozen-lockfile`, `bun run verify`, `bun run smoke` and `git diff --check`. The smoke test starts real Electron against a loopback HTTP fixture and checks preload exposure, display round trips, invalid input rejection and unsubscribe cleanup. Reports and screenshots stay under ignored `out/`; packaging includes only compiled application modules, static assets and distribution configuration.
+Run `bun install --frozen-lockfile`, `bun run verify`, `bun run smoke` and `git diff --check`. The smoke test starts real Electron against a loopback HTTP fixture and checks preload exposure, display round trips, invalid input rejection and unsubscribe cleanup; it then points the client at a refused port and asserts that the offline page ran its compiled script (the query text reached the DOM, the retry handler and the bridge are there). Reports and screenshots stay under ignored `out/`; packaging includes only compiled application modules, static assets and distribution configuration.
 
-After building a Windows directory package, run the verify:package script; for another platform, pass its app.asar path to `node out/scripts/check-package.js`. This checks required modules, distribution/version agreement and exclusion of diagnostics.
+`bun run verify:package` rebuilds and inspects a Windows directory package; for another platform, pass its app.asar path to `node out/scripts/check-package.js`. This checks required modules, that each page loads a script contained in the package, distribution/version agreement and exclusion of diagnostics.
 
 Local Windows verification on 2026-11-14: frozen install passed; TypeScript and 35 tests (66 assertions) passed; real Electron fixture passed. Windows directory packaging passed using the locally checksum-verified Electron distribution. Source and packaged live-game diagnostics reached the Chinese welcome screen with a canvas, no loading overlay, a working display API and hardware ANGLE/D3D11 on Intel Iris Xe. These are startup assertions, not an FPS benchmark or a full gameplay test. No signing certificate, installer execution or automatic update cycle was tested.
 

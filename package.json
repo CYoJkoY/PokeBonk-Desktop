@@ -19,7 +19,7 @@
     "verify": "bun run check && bun test",
     "smoke": "bun run build && node out/scripts/smoke.js",
     "benchmark:state": "bun run build && node out/scripts/benchmark-state.js",
-    "verify:package": "node out/scripts/check-package.js",
+    "verify:package": "bun run build && node out/scripts/check-package.js",
     "verify:vulkan": "bun run build && node out/scripts/check-vulkan.js",
     "start": "bun run build && electron .",
     "dev": "bun run build && electron . --url=http://localhost:5173 --devtools",

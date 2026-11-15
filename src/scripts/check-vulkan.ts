@@ -7,7 +7,8 @@ import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
-import { isRecord } from '../domain/config';
+import { electronBinary } from './electron-binary';
+import { record } from './json';
 import { ROOT } from './repo-root';
 
 const FIXTURE = `<!doctype html><title>Vulkan presentation diagnostic</title>
@@ -26,12 +27,6 @@ const FIXTURE = `<!doctype html><title>Vulkan presentation diagnostic</title>
     }
     draw();</script>`;
 
-/** JSON read back from a diagnostic file is unknown until it is narrowed here. */
-function record(value: unknown, what: string): Record<string, unknown> {
-  if (!isRecord(value)) throw new Error(`${what} is not an object`);
-  return value;
-}
-
 /** One pixel of the real desktop, as the capture script reports it. */
 function rgb(value: unknown, what: string): [number, number, number] {
   if (!Array.isArray(value) || value.length < 3) throw new Error(`${what} is not an RGB triple`);
@@ -46,12 +41,6 @@ function capture(args: string[]): Promise<string> {
       if (error) failed(error); else done(stdout);
     });
   });
-}
-
-function electronBinary(): string {
-  const binary: unknown = require('electron');
-  if (typeof binary !== 'string') throw new Error('The electron package did not resolve to an executable path');
-  return binary;
 }
 
 async function vulkan(): Promise<void> {
@@ -73,7 +62,7 @@ async function vulkan(): Promise<void> {
     const packaged = process.argv[2];
     const args = packaged ? [] : [ROOT];
     args.push(`--url=http://127.0.0.1:${address.port}`, `--selftest=${output}`, '--selftest-wait=12000');
-    child = spawn(packaged ? resolve(packaged) : electronBinary(), args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
+    child = spawn(packaged ? resolve(ROOT, packaged) : electronBinary(), args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
     const current = child;
     const exited = new Promise<number | null>((done, failed) => {
       watchdog = setTimeout(() => { current.kill(); failed(new Error('Vulkan diagnostic exceeded 35 seconds')); }, 35_000);
