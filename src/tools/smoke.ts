@@ -5,7 +5,7 @@
  * the relative path has to resolve. Everything it produces stays under `out/`.
  */
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join, resolve } from 'node:path';
 import assert from 'node:assert/strict';
@@ -86,11 +86,41 @@ async function refusedUrl(): Promise<string> {
 
 type ClientRun = { url: string; output: string; probe?: string; wait?: number; splash?: boolean };
 
+/** The self-test reports by itself after this long, so a stuck client is a report, not a silent kill. */
+const CLIENT_DEADLINE_MS = 30_000;
+/** Its own hard limit, above the deadline: a client that ignores the deadline is killed and the log says where it stopped. */
+const CLIENT_TIMEOUT_MS = 45_000;
+
+/** The client's own output, kept next to its report: on a failure it is all the run has to say for itself. */
+function clientLog(output: string): string {
+  const file = join(output, 'client.log');
+  try {
+    const lines = readFileSync(file, 'utf8').trimEnd().split(/\r?\n/);
+    return lines.slice(-12).join('\n');
+  } catch {
+    return '(the client printed nothing)';
+  }
+}
+
+/** Why a run produced no usable report: the self-test deadline, a crash, or a kill. */
+function failureDetail(output: string, code: number | null): string {
+  const report = join(output, 'report.json');
+  if (existsSync(report)) {
+    try {
+      const parsed = readJson(report, 'report.json');
+      const events = Array.isArray(parsed.events) ? parsed.events.join(' > ') : '';
+      return `report says ${String(parsed.loaded)}${parsed.error ? ` (${String(parsed.error)})` : ''}${events ? `: ${events}` : ''}`;
+    } catch { /* unreadable report: fall through to the log */ }
+  }
+  return `exit ${String(code)}, no report; log:\n${clientLog(output)}`;
+}
+
 /** Runs the real client (or the packaged executable) on `url` until it writes the self-test report. */
 async function runClient({ url, output, probe, wait = 1000, splash = false }: ClientRun): Promise<Record<string, unknown>> {
   mkdirSync(output, { recursive: true });
   const packaged = process.argv[2];
-  const args = [...(packaged ? [] : [ROOT]), `--url=${url}`, `--selftest=${output}`, `--selftest-wait=${wait}`];
+  const args = [...(packaged ? [] : [ROOT]), `--url=${url}`, `--selftest=${output}`, `--selftest-wait=${wait}`,
+    `--selftest-deadline=${CLIENT_DEADLINE_MS}`];
   if (probe) {
     const probeFile = join(output, 'probe.js');
     writeFileSync(probeFile, probe);
@@ -99,13 +129,22 @@ async function runClient({ url, output, probe, wait = 1000, splash = false }: Cl
   // The loading screen over the game: the report carries the page's own DOM (src/main.ts, `readSplashPage`).
   if (splash) args.push('--splash');
   if (process.platform === 'linux') args.push('--no-sandbox');
-  const child = spawn(packaged ? resolve(ROOT, packaged) : electronBinary(), args, { cwd: ROOT, stdio: 'inherit', windowsHide: true });
+  const spawned = packaged ? resolve(ROOT, packaged) : electronBinary();
+  const log = createWriteStream(join(output, 'client.log'));
+  const child = spawn(spawned, args, { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  for (const stream of [child.stdout, child.stderr]) {
+    stream.on('data', (chunk: Buffer) => { log.write(chunk); process.stderr.write(chunk); });
+  }
   const code = await new Promise<number | null>((exited, failed) => {
-    const timer = setTimeout(() => { child.kill(); failed(new Error('Electron smoke test exceeded 45 seconds')); }, 45_000);
+    const timer = setTimeout(() => {
+      child.kill();
+      failed(new Error(`Electron smoke test exceeded ${CLIENT_TIMEOUT_MS / 1000} s: ${failureDetail(output, null)}`));
+    }, CLIENT_TIMEOUT_MS);
     child.once('error', (error) => { clearTimeout(timer); failed(error); });
     child.once('exit', (exitCode) => { clearTimeout(timer); exited(exitCode); });
   });
-  assert.equal(code, 0, 'Electron exited with a failure');
+  log.end();
+  assert.equal(code, 0, `Electron exited with a failure: ${failureDetail(output, code)}`);
   return readJson(join(output, 'report.json'), 'report.json');
 }
 

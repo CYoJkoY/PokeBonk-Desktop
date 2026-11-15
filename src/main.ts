@@ -28,11 +28,31 @@ const GAME_URL = (arg('url') ?? process.env.POKEBONK_URL ?? 'https://pokebonk.co
 const navigation = createNavigationPolicy(GAME_URL, pathToFileURL(join(__dirname, '..', 'static', 'offline.html')).href);
 const sameSite = navigation.isGame;
 const SELFTEST = arg('selftest');
+/** What the self-test window did, in order, and the timer that ends it when the page never loads. */
+const selftestLog: string[] = [];
+let selftestDeadline: ReturnType<typeof setTimeout> | undefined;
 // Diagnostics never read or overwrite a player's profile or live window settings.
 if (SELFTEST) {
-  const profile = resolve(SELFTEST, 'profile');
+  const dir = SELFTEST, profile = resolve(dir, 'profile');
   mkdirSync(profile, { recursive: true });
   app.setPath('userData', profile);
+  /**
+   * A self-test has to end by itself even when the page never loads: on a CI runner with no way to the game,
+   * `did-finish-load` stayed pending for ever, no report was written, and the job killed the process after 90 s with
+   * nothing to show. `--selftest-deadline=<ms>` records what happened and exits non-zero, so a stuck client is a loud
+   * failure in a couple of minutes instead of a silent timeout.
+   */
+  const deadline = Number(arg('selftest-deadline') ?? 120_000);
+  selftestDeadline = setTimeout(() => {
+    selftestDeadline = undefined;
+    const why = 'the window did not finish loading in ' + deadline + ' ms';
+    console.error('[selftest] ' + why + (selftestLog.length ? ': ' + selftestLog.join(' > ') : ''));
+    try {
+      writeFileSync(join(dir, 'report.json'), JSON.stringify({ loaded: false, error: why, events: selftestLog, url: GAME_URL,
+        version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome }, null, 2));
+    } catch (error) { console.error('[selftest] could not write the report', error); }
+    app.exit(3);
+  }, deadline);
 }
 const DEVTOOLS = flag('devtools') || !app.isPackaged;
 const distribution = parseDistribution(JSON.parse(readFileSync(join(__dirname, '..', 'client.json'), 'utf8')) as unknown);
@@ -597,6 +617,14 @@ function selftest(w: BrowserWindow, dir: string) {
   mkdirSync(dir, { recursive: true });
   // With --splash: the loading screen at 0.6, 2 and 4 s (splash-*.png) and how long it took to give way to the menu.
   const t0 = Date.now();
+  // What the page did, in order: the report carries it, and it is all a timed-out run has to show for itself.
+  const note = (event: string, detail = '') => { selftestLog.push((Date.now() - t0) + 'ms ' + event + (detail ? ' (' + detail + ')' : '')); };
+  const wc = w.webContents;
+  wc.on('did-start-loading', () => note('start-loading'));
+  wc.on('dom-ready', () => note('dom-ready'));
+  wc.on('did-finish-load', () => note('finish-load'));
+  wc.on('did-fail-load', (_e, code, desc, url, isMain) => note('fail-load', code + ' ' + desc + (isMain ? '' : ' (sub frame)') + ' ' + url));
+  wc.on('render-process-gone', (_e, d) => note('render-process-gone', d.reason));
   if (SPLASH) for (const ms of [600, 2000, 4000]) setTimeout(() => {
     void splash?.view.webContents.capturePage().then((img) => writeFileSync(join(dir, `splash-${ms}.png`), img.toPNG())).catch(() => {});
   }, ms);
@@ -614,7 +642,10 @@ function selftest(w: BrowserWindow, dir: string) {
     const script = js ? await w.webContents.executeJavaScript(`(async () => { ${readFileSync(js, 'utf8')} })()`, true).catch((e) => ({ error: String(e) })) : undefined;
     const report = { splashGoneMs, splashPage: await readSplashPage(), script, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, url: w.webContents.getURL(),
       gpuFeatures: app.getGPUFeatureStatus(), gpu: await app.getGPUInfo('complete').then((g: any) => ({ active: g.gpuDevice?.find((d: any) => d.active)?.deviceString, gl: g.auxAttributes?.glImplementationParts })).catch(() => null), webgl };
-    writeFileSync(join(dir, 'report.json'), JSON.stringify(report, null, 2));
+    const loaded = { loaded: true, events: selftestLog, ...report };
+    if (selftestDeadline) clearTimeout(selftestDeadline);
+    selftestDeadline = undefined;
+    writeFileSync(join(dir, 'report.json'), JSON.stringify(loaded, null, 2));
     writeFileSync(join(dir, 'screen.png'), (await w.webContents.capturePage()).toPNG());
     quitting = true;
     app.exit(0);

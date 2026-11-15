@@ -21,7 +21,7 @@ bun run smoke
 bun start
 ```
 
-`bun run smoke` opens a local fixture in the real Electron runtime, checks the preload bridge and writes isolated diagnostics under `out/`. `bun run selftest` diagnoses the live game with an isolated profile. Neither replaces gameplay testing.
+`bun run smoke` opens local fixtures in the real Electron runtime, checks the preload bridge and writes isolated diagnostics under `out/`; `node out/tools/smoke.js <path-to-executable>` runs the same flows against a packaged build, which is what the `Release` workflow checks on macOS. `bun run selftest` diagnoses the live game with an isolated profile and always ends: `--selftest-deadline=<ms>` (120 s by default) writes a report with `loaded: false` and exits non-zero when the page never finishes loading. Neither replaces gameplay testing.
 
 ### Layout
 

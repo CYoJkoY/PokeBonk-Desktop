@@ -33,6 +33,7 @@ jobs:
 
   build:
     needs: validate
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +64,10 @@ jobs:
       - name: Check packaged application contents
         if: runner.os == 'Windows'
         run: bun run verify:package
-      # The DMG as players get it: the helpers must have exactly the bytes of CFBundleName, and the app must start and quit by itself.
+      # The DMG as players get it: the helpers must have exactly the bytes of CFBundleName (issue #5), and the packaged app
+      # must run the pages in its own asar - the game window with the preload bridge, the offline page, the loading screen -
+      # then quit by itself. Those are the loopback fixtures of src/tools/smoke.ts: the check must never wait for the live game
+      # to answer a CI runner, which is what hung the v1.5.4 run for 90 s with no report (issue #9).
       - name: Check the macOS app from the DMG
         if: runner.os == 'macOS'
         run: |
@@ -76,12 +80,12 @@ jobs:
           ls "$app/Contents/Frameworks" | grep ' Helper' | sed 's/ Helper.*//' | sort -u > /tmp/helpers.txt
           echo "CFBundleName: $name"; cat /tmp/helpers.txt
           [ "$(cat /tmp/helpers.txt)" = "$name" ] || { echo "Helper names do not match CFBundleName"; exit 1; }
-          "$app/Contents/MacOS/$exe" --selftest=/tmp/st --selftest-wait=6000 &
-          pid=$!
-          for i in $(seq 1 90); do kill -0 $pid 2>/dev/null || break; sleep 1; done
-          kill -0 $pid 2>/dev/null && { kill $pid; echo "Self-test did not finish"; exit 1; }
-          wait $pid
-          cat /tmp/st/report.json
+          # Out of the image before the first launch, which is what a player does (drag to /Applications): launched from the
+          # read-only mount the client starts loading and then never reaches dom-ready, so the smoke flows time out there
+          # while the very same bundle passes in about 11 s from any writable path (issue #9).
+          rm -rf /tmp/pbapp && mkdir -p /tmp/pbapp && cp -R "$app" /tmp/pbapp/
+          installed=$(ls -d /tmp/pbapp/*.app | head -1)
+          node out/tools/smoke.js "$installed/Contents/MacOS/$exe"
           hdiutil detach /tmp/pb
       - uses: actions/upload-artifact@v4
         with:
