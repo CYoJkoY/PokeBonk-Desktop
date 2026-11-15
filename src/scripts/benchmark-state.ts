@@ -40,9 +40,13 @@ function measure(coalesce: boolean): Measurement {
 const rounds = Array.from({ length: 5 }, () => ({ baseline: measure(false), coalesced: measure(true) }));
 assert.ok(rounds.every((round) => round.baseline.writes === EVENTS && round.coalesced.writes === 1));
 const median = (pick: (round: (typeof rounds)[number]) => number): number => rounds.map(pick).sort((a, b) => a - b)[2];
+const totalWrites = (pick: (round: (typeof rounds)[number]) => number): number => rounds.reduce((sum, round) => sum + pick(round), 0);
+const baselineWrites = totalWrites((round) => round.baseline.writes);
+const coalescedWrites = totalWrites((round) => round.coalesced.writes);
 const report = {
   events: EVENTS, rounds, baselineMedianMs: median((round) => round.baseline.elapsedMs), coalescedMedianMs: median((round) => round.coalesced.elapsedMs),
-  writeReductionPercent: 99.8, node: process.version, platform: process.platform,
+  baselineWrites, coalescedWrites, writeReductionPercent: Number((100 * (1 - coalescedWrites / baselineWrites)).toFixed(1)),
+  node: process.version, platform: process.platform,
 };
 writeFileSync(join(root, 'report.json'), JSON.stringify(report, null, 2));
 console.log(JSON.stringify({ ...report, output: root }, null, 2));
