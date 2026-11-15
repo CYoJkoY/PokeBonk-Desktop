@@ -72,7 +72,7 @@ async function vulkan(): Promise<void> {
     const captured = (async (): Promise<unknown> => {
       await new Promise<void>((settled) => setTimeout(settled, 5000));
       const stdout = await capture([
-        '-NoProfile', '-File', join(ROOT, 'scripts', 'capture-presentation.ps1'),
+    '-NoProfile', '-File', join(ROOT, 'src', 'tools', 'capture-presentation.ps1'),
         '-ExpectedProcessId', String(current.pid), '-OutputFile', join(output, 'desktop.png'),
       ]);
       return JSON.parse(stdout.trim());

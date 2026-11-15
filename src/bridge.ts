@@ -1,9 +1,15 @@
 import { ipcMain, type BrowserWindow, type IpcMainEvent, type IpcMainInvokeEvent } from 'electron';
-import type { createNavigationPolicy } from '../domain/navigation';
-import type { DesktopRequests } from '../ports/desktop-requests';
+import type { createNavigationPolicy } from './navigation';
+
+/** What the updater and the composition root can register on the bridge. */
+export interface DesktopRequests {
+  handle(channel: string, run: (payload: unknown) => unknown): void;
+  on(channel: string, run: (payload: unknown) => void, offline?: boolean): void;
+  fullscreen(): void;
+}
 
 type Event = IpcMainEvent | IpcMainInvokeEvent;
-/** The composition root owns the active window; adapters receive only the access they need. */
+/** The composition root owns the active window; this bridge receives only the access it needs. */
 export function desktopBridge(getWindow: () => BrowserWindow | null, policy: ReturnType<typeof createNavigationPolicy>): DesktopRequests {
   const allowed = (event: Event, offline = false) => {
     const w = getWindow(), frame = event.senderFrame;

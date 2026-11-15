@@ -1,5 +1,5 @@
 /**
- * Discord Rich Presence (docs/DESKTOP.md, «Discord»): «Jugando a PokéBonk» on the player's Discord profile, with what the game
+ * Discord Rich Presence (docs/RUNTIME.md, «Discord»): «Jugando a PokéBonk» on the player's Discord profile, with what the game
  * tells us (the Pokémon, the zone, the time). Discord's local IPC, written here instead of a library: a named pipe (Windows)
  * or a Unix socket, an 8-byte header (opcode, length, little-endian) and JSON. Nothing goes over the network from here.
  *
@@ -8,8 +8,8 @@
  */
 import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { DiscordFrames } from './adapters/discord-frames';
-import { isRecord } from './domain/config';
+import { DiscordFrames } from './discord-frames';
+import { isRecord } from './config';
 
 /**
  * The composition root supplies the Discord application ID from the bundled, validated client.json.

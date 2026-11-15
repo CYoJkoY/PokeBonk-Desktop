@@ -13,7 +13,7 @@ export function validateReleaseTag(tag: string | undefined, version: string): st
   return tagVersion;
 }
 
-// `node out/scripts/check-release-version.js <tag>`: importing it (tests/release-version.test.ts) validates nothing.
+// `node out/tools/check-release-version.js <tag>`: importing it (tests/release-version.test.ts) validates nothing.
 if (require.main === module) {
   try {
     const version = packageVersion();

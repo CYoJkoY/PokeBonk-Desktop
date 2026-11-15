@@ -2,9 +2,9 @@ import { expect, test } from 'bun:test';
 import { createServer, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DiscordFrames, MAX_RPC_PAYLOAD } from '../src/adapters/discord-frames';
+import { DiscordFrames, MAX_RPC_PAYLOAD } from '../src/discord-frames';
 import { DiscordPresence } from '../src/discord';
-import { isRecord } from '../src/domain/config';
+import { isRecord } from '../src/config';
 
 function frame(op: number, value: unknown) {
   const body = Buffer.from(JSON.stringify(value));

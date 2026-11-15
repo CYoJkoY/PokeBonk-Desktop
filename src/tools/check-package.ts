@@ -23,7 +23,7 @@ function asarTools(): AsarTools {
 const { listPackage, extractFile } = asarTools();
 
 /**
- * The loading and offline pages run their compiled script (src/renderer) through `<script src>`: an inline script could not
+ * The loading and offline pages run their compiled script (src/pages) through `<script src>`: an inline script could not
  * run under their `script-src file:`, and a wrong relative path would leave the page blank without any error.
  */
 function checkPages(archive: string, paths: string[]): void {
@@ -44,19 +44,20 @@ const argument = process.argv[2] ?? join('release', 'win-unpacked', 'resources',
 const archive = isAbsolute(argument) ? argument : resolve(ROOT, argument);
 const paths = listPackage(archive).map((path) => path.split(sep).join('/'));
 const entrypoints = ['main', 'preload', 'discord', 'updater', 'text'].map((name) => `/out/${name}.js`);
-const modules = /^[/]out[/](domain|adapters|ports)[/][^/]+[.]js$/;
-// The loading and offline pages' scripts (src/renderer).
-const pageScripts = /^[/]out[/]renderer[/][^/]+[.]js$/;
+// The flat src/ modules the entrypoints import; nothing else may ship under out/.
+const modules = ['bridge', 'coalesced-task', 'config', 'discord-frames', 'distribution', 'navigation', 'settings', 'window-state']
+  .map((name) => `/out/${name}.js`);
+// The loading and offline pages' scripts (src/pages).
+const pageScripts = /^[/]out[/]pages[/][^/]+[.]js$/;
 for (const path of paths.filter((path) => path.startsWith('/out/') && path.endsWith('.js'))) {
-  assert.ok(entrypoints.includes(path) || modules.test(path) || pageScripts.test(path), `Unexpected application script: ${path}`);
+  assert.ok(entrypoints.includes(path) || modules.includes(path) || pageScripts.test(path), `Unexpected application script: ${path}`);
 }
-const required = [...entrypoints, '/out/domain/navigation.js', '/out/adapters/bridge.js', '/out/adapters/discord-frames.js',
-  '/out/adapters/coalesced-task.js', '/out/renderer/offline.js', '/out/renderer/splash.js', '/client.json'];
+const required = [...entrypoints, ...modules, '/out/pages/offline.js', '/out/pages/splash.js', '/client.json'];
 for (const path of required) {
   assert.ok(extractFile(archive, normalize(path.slice(1))).length, `Missing module: ${path}`);
 }
 checkPages(archive, paths);
-assert.equal(paths.some((path) => /^[/](tests|scripts)[/]/.test(path) || /[/]out[/].*(smoke-|selftest|live-probe|[.]zip$)/.test(path)), false, 'Diagnostics must not ship');
+assert.equal(paths.some((path) => /^[/](tests|src)[/]/.test(path) || /[/]out[/].*(smoke-|selftest|live-probe|[.]zip$)/.test(path)), false, 'Diagnostics must not ship');
 const pkg = record(JSON.parse(extractFile(archive, 'package.json').toString()), 'packaged package.json');
 assert.equal(pkg.version, packageVersion());
 const config = record(JSON.parse(extractFile(archive, 'client.json').toString()), 'packaged client.json');

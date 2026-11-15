@@ -1,4 +1,4 @@
-# Cliente de escritorio de PokéBonk (docs/DESKTOP.md). `npm run dist:win|mac|linux` en desktop/; salida en desktop/release/.
+# Cliente de escritorio de PokéBonk (docs/RUNTIME.md). `bun run dist:win|mac|linux`; salida en release/.
 appId: com.pokebonk.desktop
 productName: PokéBonk
 # Nombre del .exe y del binario sin tilde (rutas, registro y AppImage).
@@ -9,20 +9,14 @@ directories:
   output: release
   buildResources: build
 files:
-  - out/main.js
-  - out/preload.js
-  - out/discord.js
-  - out/updater.js
-  - out/text.js
-  - out/domain/**/*.js
-  - out/adapters/**/*.js
-  - out/ports/**/*.js
-  - out/renderer/**/*.js
+  # The flat application modules (main, preload, discord, updater, text and the rest of src/*.ts).
+  - out/*.js
+  - out/pages/**/*.js
   - static/**
   - build/icon.png
   - package.json
   - client.json
-# Automatic updates (src/updater.ts, docs/DESKTOP.md): electron-updater reads latest.yml / latest-linux.yml from the latest release
+# Automatic updates (src/updater.ts, docs/RUNTIME.md): electron-updater reads latest.yml / latest-linux.yml from the latest release
 # of this distribution. client.json explicitly controls runtime opt-in. `--publish never` still writes update metadata.
 publish:
   provider: github
@@ -39,7 +33,8 @@ win:
       arch: [x64]
     - target: portable
       arch: [x64]
-  icon: build/icon.png
+  # Multi-size .ico (16–256 px) for the .exe, the installer and the shortcuts; the PNG below serves macOS and Linux.
+  icon: build/icon.ico
 nsis:
   # Assisted installer (next client version): it lets the player choose the folder (reports 17366, 17438: «why C: by default»),
   # always makes the desktop shortcut and starts the game at the end. Still per user (no administrator).
@@ -70,7 +65,7 @@ mac:
     CFBundleDisplayName: PokéBonk
   # Sin cuenta de Apple Developer no hay notarización, pero sí firma ad-hoc («-»): sin ninguna firma, el Mac con
   # Apple Silicon dice que la app «está dañada» y no deja abrirla. Con la ad-hoc, la primera vez se abre desde
-  # Configuración → Privacidad y seguridad → «Abrir igualmente» (docs/DESKTOP.md).
+  # Configuración → Privacidad y seguridad → «Abrir igualmente» (docs/RUNTIME.md).
   identity: "-"
   hardenedRuntime: false
   gatekeeperAssess: false

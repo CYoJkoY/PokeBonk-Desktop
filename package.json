@@ -17,10 +17,10 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "test": "bun test",
     "verify": "bun run check && bun test",
-    "smoke": "bun run build && node out/scripts/smoke.js",
-    "benchmark:state": "bun run build && node out/scripts/benchmark-state.js",
-    "verify:package": "bun run build && node out/scripts/check-package.js",
-    "verify:vulkan": "bun run build && node out/scripts/check-vulkan.js",
+    "smoke": "bun run build && node out/tools/smoke.js",
+    "benchmark:state": "bun run build && node out/tools/benchmark-state.js",
+    "verify:package": "bun run build && node out/tools/check-package.js",
+    "verify:vulkan": "bun run build && node out/tools/check-vulkan.js",
     "start": "bun run build && electron .",
     "dev": "bun run build && electron . --url=http://localhost:5173 --devtools",
     "selftest": "bun run build && electron . --selftest=out/selftest",
@@ -28,7 +28,7 @@
     "dist:mac": "bun run build && electron-builder --mac -c.productName=PokeBonk",
     "dist:linux": "bun run build && electron-builder --linux",
     "dist:linux:docker": "npm run build && docker run --rm -v \"%INIT_CWD%:/project\" -v /project/node_modules -w /project electronuserland/builder:22 bash -c \"npm ci --no-audit --no-fund && npx electron-builder --linux -c.directories.output=/tmp/rel && cp /tmp/rel/*.AppImage /tmp/rel/*.deb /project/release/\"",
-    "sync:repo": "bun run build && node out/scripts/sync-repo.js"
+    "sync:repo": "bun run build && node out/tools/sync-repo.js"
   },
   "devDependencies": {
     "@types/node": "26.6.5",

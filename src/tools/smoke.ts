@@ -156,7 +156,7 @@ async function checkOfflinePage(): Promise<void> {
   const output = join(ROOT, 'out', `smoke-offline-${Date.now()}`);
   const report = await runClient({ url: await refusedUrl(), probe: OFFLINE_PROBE, output });
   const page = record(report.script, 'report.script');
-  assert.equal(page.copiedQuery, true, 'The offline page did not run out/renderer/offline.js');
+  assert.equal(page.copiedQuery, true, 'The offline page did not run out/pages/offline.js');
   assert.equal(page.retryHandler, true, 'The offline page has no retry handler');
   assert.equal(page.hasBridge, true, 'The offline page has no preload bridge');
   assert.ok(typeof page.title === 'string' && page.title.length > 0, 'The offline page has no title');
