@@ -26,5 +26,3 @@ bun start
 Build installers with `bun run dist:win`, `bun run dist:mac` or `bun run dist:linux` on the corresponding platform. The legacy Docker command is an optional npm fallback, uses a separate Node 22 builder and is not part of the verified Bun toolchain.
 
 Automatic updates are disabled in this fork's `client.json`. Enable them only after preparing releases for the configured distribution. Architecture, compatibility, validation and rollback details: [Runtime decision](docs/RUNTIME.md).
-
-Runtime resilience review for 1.5.3: [findings, compatibility and measurements](docs/REVIEW-1.5.3.md). Run `bun run benchmark:state` to reproduce the window persistence burst benchmark.
