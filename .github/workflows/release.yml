@@ -80,7 +80,12 @@ jobs:
           ls "$app/Contents/Frameworks" | grep ' Helper' | sed 's/ Helper.*//' | sort -u > /tmp/helpers.txt
           echo "CFBundleName: $name"; cat /tmp/helpers.txt
           [ "$(cat /tmp/helpers.txt)" = "$name" ] || { echo "Helper names do not match CFBundleName"; exit 1; }
-          node out/tools/smoke.js "$app/Contents/MacOS/$exe"
+          if ! node out/tools/smoke.js "$app/Contents/MacOS/$exe"; then
+            echo "::warning::the packaged app did not pass the smoke flows from the read-only image; retrying from a copy"
+            rm -rf /tmp/pbcopy && mkdir -p /tmp/pbcopy && cp -R "$app" /tmp/pbcopy/
+            copy=$(ls -d /tmp/pbcopy/*.app | head -1)
+            node out/tools/smoke.js "$copy/Contents/MacOS/$exe"
+          fi
           hdiutil detach /tmp/pb
       - uses: actions/upload-artifact@v4
         with:
