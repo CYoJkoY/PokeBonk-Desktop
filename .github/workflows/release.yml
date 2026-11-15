@@ -33,6 +33,7 @@ jobs:
 
   build:
     needs: validate
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +64,10 @@ jobs:
       - name: Check packaged application contents
         if: runner.os == 'Windows'
         run: bun run verify:package
-      # The DMG as players get it: the helpers must have exactly the bytes of CFBundleName, and the app must start and quit by itself.
+      # The DMG as players get it: the helpers must have exactly the bytes of CFBundleName (issue #5), and the packaged app
+      # must run the pages in its own asar - the game window with the preload bridge, the offline page, the loading screen -
+      # then quit by itself. Those are the loopback fixtures of src/tools/smoke.ts: the check must never wait for the live game
+      # to answer a CI runner, which is what hung the v1.5.4 run for 90 s with no report (issue #9).
       - name: Check the macOS app from the DMG
         if: runner.os == 'macOS'
         run: |
@@ -76,12 +80,7 @@ jobs:
           ls "$app/Contents/Frameworks" | grep ' Helper' | sed 's/ Helper.*//' | sort -u > /tmp/helpers.txt
           echo "CFBundleName: $name"; cat /tmp/helpers.txt
           [ "$(cat /tmp/helpers.txt)" = "$name" ] || { echo "Helper names do not match CFBundleName"; exit 1; }
-          "$app/Contents/MacOS/$exe" --selftest=/tmp/st --selftest-wait=6000 &
-          pid=$!
-          for i in $(seq 1 90); do kill -0 $pid 2>/dev/null || break; sleep 1; done
-          kill -0 $pid 2>/dev/null && { kill $pid; echo "Self-test did not finish"; exit 1; }
-          wait $pid
-          cat /tmp/st/report.json
+          node out/tools/smoke.js "$app/Contents/MacOS/$exe"
           hdiutil detach /tmp/pb
       - uses: actions/upload-artifact@v4
         with:
