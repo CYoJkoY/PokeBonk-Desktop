@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { coalescedTask } from '../src/adapters/coalesced-task';
+import { coalescedTask } from '../src/coalesced-task';
 
 test('a burst persists the latest state once and flush cancels the trailing write', async () => {
   let state = 0; const saved: number[] = [];

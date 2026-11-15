@@ -2,11 +2,11 @@
 <html>
 <head>
 <meta charset="utf-8" />
-<!-- Only the page's own compiled script (out/renderer/splash.js) runs here: no inline script. -->
+<!-- Only the page's own compiled script (out/pages/splash.js) runs here: no inline script. -->
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src file:; img-src file:; font-src file:" />
 <title>PokéBonk</title>
 <!--
-  The client's loading screen (docs/DESKTOP.md, «Pantalla de carga»): over the game while pokebonk.com loads, from the
+  The client's loading screen (docs/RUNTIME.md, «Pantalla de carga»): over the game while pokebonk.com loads, from the
   first frame to the main menu. desktop/src/main.ts opens it with ?lang, img, tips (JSON), tip, label and ver, and then
   drives it with pb.set(progress, label) and pb.out().
 -->
@@ -65,6 +65,6 @@
   <div class="status"><span id="label"></span><small id="ver"></small></div>
   <div class="bar"><i id="fill"></i></div>
 </div>
-<script src="../out/renderer/splash.js"></script>
+<script src="../out/pages/splash.js"></script>
 </body>
 </html>

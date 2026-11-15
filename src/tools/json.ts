@@ -3,7 +3,7 @@
  * key named in the error. The scripts share this instead of three copies of the same guard.
  */
 import { readFileSync } from 'node:fs';
-import { isRecord } from '../domain/config';
+import { isRecord } from '../config';
 
 /** `value` as a JSON object, or an error that says what was expected to be one. */
 export function record(value: unknown, what: string): Record<string, unknown> {

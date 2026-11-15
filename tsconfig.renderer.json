@@ -1,11 +1,11 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "rootDir": "src/renderer",
-    "outDir": "out/renderer",
+    "rootDir": "src/pages",
+    "outDir": "out/pages",
     "module": "esnext",
     "types": []
   },
-  "include": ["src/renderer"],
+  "include": ["src/pages"],
   "exclude": []
 }

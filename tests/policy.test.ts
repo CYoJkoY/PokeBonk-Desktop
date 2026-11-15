@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
-import { anglesFor, parseConfig, parseDisplayPatch } from '../src/domain/config';
-import { createNavigationPolicy } from '../src/domain/navigation';
-import { parseDistribution } from '../src/domain/distribution';
-import { parseWindowState } from '../src/domain/window-state';
+import { anglesFor, parseConfig, parseDisplayPatch } from '../src/config';
+import { createNavigationPolicy } from '../src/navigation';
+import { parseDistribution } from '../src/distribution';
+import { parseWindowState } from '../src/window-state';
 
 describe('remote content boundary', () => {
   const policy = createNavigationPolicy('https://pokebonk.com', 'file:///app/static/offline.html');

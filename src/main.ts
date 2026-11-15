@@ -1,5 +1,5 @@
 /**
- * PokéBonk desktop client (docs/DESKTOP.md). It loads the live game from pokebonk.com, so it is always the same version
+ * PokéBonk desktop client (docs/RUNTIME.md). It loads the live game from pokebonk.com, so it is always the same version
  * as the web and the server, with the same origin (saves, accounts, captcha and co-op work unchanged). What it adds is
  * the browser settings the players can't get right by themselves: the dedicated GPU, hardware acceleration always on,
  * no throttling in the background or behind another window, real fullscreen and a window of its own.
@@ -9,13 +9,13 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { anglesFor, parseDisplayPatch, SPLASH_ART, type Angle, type ClientCfg, type DisplayPatch, isRecord } from './domain/config';
-import { createNavigationPolicy } from './domain/navigation';
-import { fileSettings } from './adapters/settings-file';
-import { desktopBridge } from './adapters/bridge';
-import { coalescedTask } from './adapters/coalesced-task';
-import { parseDistribution } from './domain/distribution';
-import { parseWindowState, type WinState } from './domain/window-state';
+import { anglesFor, parseDisplayPatch, SPLASH_ART, type Angle, type ClientCfg, type DisplayPatch, isRecord } from './config';
+import { createNavigationPolicy } from './navigation';
+import { fileSettings } from './settings';
+import { desktopBridge } from './bridge';
+import { coalescedTask } from './coalesced-task';
+import { parseDistribution } from './distribution';
+import { parseWindowState, type WinState } from './window-state';
 import { langOf, tips, tr, type Lang } from './text';
 import { DiscordPresence, type Activity } from './discord';
 import { startUpdater } from './updater';
@@ -95,7 +95,7 @@ if (linuxNeedsNoSandbox() || process.argv.includes('--no-sandbox')) app.commandL
 const launchCfg = readCfg();
 // V-Sync stays on whatever the saved setting says (2026-10-31): with `disable-gpu-vsync` + `disable-frame-rate-limit`
 // requestAnimationFrame fired thousands of times a second and the game crawled while the FPS counter said hundreds
-// (docs/DESKTOP.md). The web game no longer offers the option and switches old clients back on (src/core/desktop.ts).
+// (docs/RUNTIME.md). The web game no longer offers the option and switches old clients back on (src/core/desktop.ts).
 if (launchCfg.angle !== 'auto') {
   app.commandLine.appendSwitch('use-angle', launchCfg.angle);
   // Vulkan needs its feature on as well in this Chromium.

@@ -1,12 +1,12 @@
 /**
  * `bun run benchmark:state`: the window state writes the client performs while the player drags a window, with and without
- * the coalescing task (src/adapters/coalesced-task.ts). Both paths write real files and must end in the same state.
+ * the coalescing task (src/coalesced-task.ts). Both paths write real files and must end in the same state.
  */
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { coalescedTask } from '../adapters/coalesced-task';
-import type { WinState } from '../domain/window-state';
+import { coalescedTask } from '../coalesced-task';
+import type { WinState } from '../window-state';
 import { ROOT } from './repo-root';
 
 const EVENTS = 500;

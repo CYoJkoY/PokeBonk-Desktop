@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { validateReleaseTag } from '../src/scripts/check-release-version';
+import { validateReleaseTag } from '../src/tools/check-release-version';
 
 describe('release tag validation', () => {
   test('accepts a matching v-prefixed three-part version', () => {

@@ -1,12 +1,12 @@
 import { expect, mock, test } from 'bun:test';
-import { createNavigationPolicy } from '../src/domain/navigation';
+import { createNavigationPolicy } from '../src/navigation';
 
 const handlers = new Map<string, (event: any, value?: unknown) => unknown>();
 mock.module('electron', () => ({ ipcMain: {
   handle: (name: string, callback: any) => handlers.set(name, callback),
   on: (name: string, callback: any) => handlers.set(name, callback),
 } }));
-const { desktopBridge } = await import('../src/adapters/bridge');
+const { desktopBridge } = await import('../src/bridge');
 const mainFrame = { url: 'https://pokebonk.com/play', origin: 'https://pokebonk.com' };
 const webContents = { mainFrame };
 const window = { isDestroyed: () => false, webContents, isFullScreen: () => true };

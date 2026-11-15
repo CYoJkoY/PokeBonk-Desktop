@@ -2,8 +2,8 @@ import { expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
-import { fileSettings } from '../src/adapters/settings-file';
-import { anglesFor } from '../src/domain/config';
+import { fileSettings } from '../src/settings';
+import { anglesFor } from '../src/config';
 
 test('settings adapter preserves existing values, reports corruption and recovers', () => {
   const root = mkdtempSync(join(tmpdir(), 'pokebonk-settings-'));

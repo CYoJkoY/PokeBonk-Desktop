@@ -1,7 +1,12 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { parseConfig, type Angle, type ClientCfg } from '../domain/config';
-import type { SettingsStore } from '../ports/settings';
+import { parseConfig, type Angle, type ClientCfg } from './config';
+
+/** Player settings storage: the only capability the composition root needs from a file. */
+export interface SettingsStore {
+  read(): ClientCfg;
+  write(patch: Partial<ClientCfg>): void;
+}
 
 /** A failed write preserves the last valid file. No filesystem dependencies in the schema. */
 export function fileSettings(file: string, angles: readonly Angle[], warn: (message: string, error: unknown) => void): SettingsStore {

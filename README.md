@@ -23,6 +23,26 @@ bun start
 
 `bun run smoke` opens a local fixture in the real Electron runtime, checks the preload bridge and writes isolated diagnostics under `out/`. `bun run selftest` diagnoses the live game with an isolated profile. Neither replaces gameplay testing.
 
+### Layout
+
+Flat by design: one level of source folders, everything else at the root.
+
+```
+src/          main.ts, preload.ts, discord.ts, text.ts, updater.ts and the flat
+              modules they import (config, navigation, distribution, window-state,
+              bridge, settings, coalesced-task, discord-frames)
+src/pages/    loading screen and offline page scripts (own tsconfig, out/pages)
+src/tools/    dev and release tools (smoke, check-*, benchmark, sync) plus the
+              PowerShell capture helper (out/tools, never packaged)
+static/       HTML pages, fonts and splash art loaded as-is
+build/        icon.ico (Windows) and icon.png (window, macOS, Linux)
+tests/        bun test suites
+docs/         runtime and distribution notes
+out/          build output (ignored)   release/  installers (ignored)
+```
+
+`bun run build` compiles `src/` and `src/pages/`; `electron-builder.yml` ships `out/*.js`, `out/pages/`, `static/`, `build/icon.png`, `package.json` and `client.json`. The Windows `.exe`, the installer and the shortcuts take `build/icon.ico`.
+
 Build installers with `bun run dist:win`, `bun run dist:mac` or `bun run dist:linux` on the corresponding platform. The legacy Docker command is an optional npm fallback, uses a separate Node 22 builder and is not part of the verified Bun toolchain.
 
 Automatic updates are disabled in this fork's `client.json`. Enable them only after preparing releases for the configured distribution. Architecture, compatibility, validation and rollback details: [Runtime decision](docs/RUNTIME.md).

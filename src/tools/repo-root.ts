@@ -1,6 +1,6 @@
 /**
- * Where this checkout is, for the development scripts (src/scripts, and out/scripts once compiled). They never trust the
- * working directory: `bun run smoke` and a plain `node out/scripts/smoke.js` both find the same package.json.
+ * Where this checkout is, for the development tools (src/tools, and out/tools once compiled). They never trust the
+ * working directory: `bun run smoke` and a plain `node out/tools/smoke.js` both find the same package.json.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';

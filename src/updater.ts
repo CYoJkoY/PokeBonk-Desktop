@@ -10,8 +10,8 @@
  */
 import { app, type BrowserWindow } from 'electron';
 import { autoUpdater } from 'electron-updater';
-import type { DesktopRequests } from './ports/desktop-requests';
-import type { Distribution } from './domain/distribution';
+import type { DesktopRequests } from './bridge';
+import type { Distribution } from './distribution';
 
 export type UpdateState = {
   /** off: this install can't update itself. idle: up to date. ready: downloaded, installs on quit. */
