@@ -4,7 +4,7 @@
  * the browser settings the players can't get right by themselves: the dedicated GPU, hardware acceleration always on,
  * no throttling in the background or behind another window, real fullscreen and a window of its own.
  */
-import { app, BrowserWindow, dialog, Menu, powerSaveBlocker, screen, session, shell, WebContentsView, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, Menu, powerSaveBlocker, screen, session, shell, webContents, WebContentsView, type WebContents } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -19,6 +19,7 @@ import { parseWindowState, type WinState } from './window-state';
 import { langOf, tips, tr, type Lang } from './text';
 import { DiscordPresence, type Activity } from './discord';
 import { startUpdater } from './updater';
+import { startBootWatch, type BootObservation, type BootWatch } from './boot-watch';
 
 const arg = (name: string) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const flag = (name: string) => process.argv.includes(`--${name}`);
@@ -31,6 +32,8 @@ const SELFTEST = arg('selftest');
 /** What the self-test window did, in order, and the timer that ends it when the page never loads. */
 const selftestLog: string[] = [];
 let selftestDeadline: ReturnType<typeof setTimeout> | undefined;
+const SELFTEST_METRICS = { intervalMs: 1000, maxSamples: 600 } as const;
+const selftestWork = { bootReads: 0, splashWrites: 0 };
 // Diagnostics never read or overwrite a player's profile or live window settings.
 if (SELFTEST) {
   const dir = SELFTEST, profile = resolve(dir, 'profile');
@@ -213,6 +216,7 @@ function createWindow() {
   // Every load of the game (reload, recovery after a crash) gets the loading screen again, until its menu is up.
   wc.on('did-start-navigation', (d) => {
     if (!d.isMainFrame || d.isSameDocument || !sameSite(d.url)) return;
+    stopBootWatch();
     if (SPLASH && !splash) showSplash(w, lang);
     if (splash) { splash.p = 0; splashSet(0.04, tr(splash.lang, 'connecting')); }
   });
@@ -329,8 +333,15 @@ async function showOffline(w: BrowserWindow, why: 'off' | 'crash') {
  * the page, then the game's own «Cargando Pokédex…» bar, read from its DOM). Not in the self-test (it screenshots the game).
  */
 const SPLASH = !SELFTEST || flag('splash');
+const BOOT_WATCH = { pollMs: 200, timeoutMs: 90_000, progressBase: 0.2, progressSpan: 0.72 } as const;
 /** Captures of the game itself (art/source/desktop/captures, docs/ART.md): the four legendary shrines and a horde. */
-let splash: { view: WebContentsView; lang: Lang; p: number; fit: () => void; since: number } | null = null;
+let splash: { view: WebContentsView; lang: Lang; p: number; label: string; fit: () => void } | null = null;
+let bootWatch: BootWatch | null = null;
+function stopBootWatch() {
+  const current = bootWatch;
+  bootWatch = null;
+  current?.cancel();
+}
 
 function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
   if (splash || w.isDestroyed()) return;
@@ -340,7 +351,7 @@ function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
   fit();
   w.on('resize', fit);
   w.contentView.addChildView(view);
-  splash = { view, lang, p: 0, fit, since: Date.now() };
+  splash = { view, lang, p: 0, label: '', fit };
   // A different illustration from last time.
   const last = readCfg().lastArt, pool = SPLASH_ART.filter((a) => a !== last), img = pool[Math.floor(Math.random() * pool.length)];
   writeCfg({ lastArt: img });
@@ -354,11 +365,16 @@ function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
 /** Moves the bar (never back) and changes the line under the tip. */
 function splashSet(p: number, label?: string) {
   if (!splash || p < splash.p) return;
+  const nextLabel = label ?? splash.label;
+  if (p === splash.p && nextLabel === splash.label) return;
   splash.p = p;
-  void splash.view.webContents.executeJavaScript(`window.pb && pb.set(${p.toFixed(3)}, ${JSON.stringify(label ?? '')})`).catch(() => {});
+  splash.label = nextLabel;
+  if (SELFTEST) selftestWork.splashWrites++;
+  void splash.view.webContents.executeJavaScript(`window.pb && pb.set(${p.toFixed(3)}, ${JSON.stringify(nextLabel)})`).catch(() => {});
 }
 /** Fades the loading screen out and gives the keyboard back to the game. */
 function hideSplash(w: BrowserWindow, fade = true) {
+  stopBootWatch();
   const s = splash;
   if (!s) return;
   splash = null;
@@ -379,31 +395,41 @@ function hideSplash(w: BrowserWindow, fade = true) {
 function watchBoot(w: BrowserWindow) {
   const wc = w.webContents;
   const observed = splash;
-  const tick = async () => {
-    if (!observed || splash !== observed || w.isDestroyed() || !sameSite(wc.getURL())) return;
-    const s = await wc.executeJavaScript(`(() => {
-      const ui = document.getElementById('ui');
-      const ld = ui && ui.querySelector(':scope > .loading');
-      if (!ld) return { screen: !!(ui && ui.querySelector(':scope > .screen')) };
-      const bar = ld.querySelector('.bar'), fill = bar && bar.querySelector('i'), label = bar && bar.querySelector('b');
-      const m = fill && /scaleX\\(([\\d.]+)\\)/.exec(fill.style.transform);
-      return { p: m ? Number(m[1]) : 0, label: label ? label.textContent : '', asks: !bar || !!ld.querySelector('button, .gl-help, .panel') };
-    })()`, true).catch(() => null) as { screen?: boolean; p?: number; label?: string; asks?: boolean } | null;
-    if (splash !== observed || w.isDestroyed()) return;
-    const lang = splash.lang;
-    if (s?.screen) {
-      splashSet(1, tr(lang, 'starting'));
-      // A beat for the menu's first frames under the fade.
-      setTimeout(() => { if (splash === observed) hideSplash(w); }, 350);
-      return;
-    }
-    if (s?.asks) return hideSplash(w);
-    if (s && s.p !== undefined) splashSet(0.2 + 0.72 * s.p, s.label || undefined);
-    // Never stuck behind it: after 90 s the game's own screen says what is going on.
-    if (Date.now() - splash.since > 90_000) return hideSplash(w);
-    setTimeout(() => void tick(), 200);
-  };
-  void tick();
+  if (!observed) return;
+  stopBootWatch();
+  let ended = false;
+  const handle = startBootWatch({
+    read: async (): Promise<BootObservation | null> => {
+      if (SELFTEST) selftestWork.bootReads++;
+      return await wc.executeJavaScript(`(() => {
+        const ui = document.getElementById('ui');
+        const ld = ui && ui.querySelector(':scope > .loading');
+        if (!ld) return { screen: !!(ui && ui.querySelector(':scope > .screen')) };
+        const bar = ld.querySelector('.bar'), fill = bar && bar.querySelector('i'), label = bar && bar.querySelector('b');
+        const m = fill && /scaleX\\(([\\d.]+)\\)/.exec(fill.style.transform);
+        return { p: m ? Number(m[1]) : 0, label: label ? label.textContent : '', asks: !bar || !!ld.querySelector('button, .gl-help, .panel') };
+      })()`, true).catch(() => null);
+    },
+    isActive: () => splash === observed && !w.isDestroyed() && sameSite(wc.getURL()),
+    onProgress: (p, label) => { if (splash === observed) splashSet(p, label); },
+    onScreen: () => {
+      splashSet(1, tr(observed.lang, 'starting'));
+      // A navigation inside the fade resets the same splash object to 0.04; the old timer must not hide the new load.
+      setTimeout(() => { if (splash === observed && splash.p >= 1) hideSplash(w); }, 350);
+    },
+    onAsks: () => { if (splash === observed) hideSplash(w); },
+    onTimeout: () => { if (splash === observed) hideSplash(w); },
+    now: Date.now,
+    schedule: (task, ms) => setTimeout(task, ms),
+    cancelTimer: (timer) => clearTimeout(timer),
+    onEnd: () => { ended = true; bootWatch = null; },
+    pollMs: BOOT_WATCH.pollMs,
+    timeoutMs: BOOT_WATCH.timeoutMs,
+    progressBase: BOOT_WATCH.progressBase,
+    progressSpan: BOOT_WATCH.progressSpan,
+  });
+  // A watcher that finished during its first synchronous check must not be kept as the current owner.
+  bootWatch = ended ? null : handle;
 }
 
 // ---------------- staying awake ----------------
@@ -617,6 +643,14 @@ function selftest(w: BrowserWindow, dir: string) {
   mkdirSync(dir, { recursive: true });
   // With --splash: the loading screen at 0.6, 2 and 4 s (splash-*.png) and how long it took to give way to the menu.
   const t0 = Date.now();
+  const metrics: { atMs: number; contents: number; processes: Electron.ProcessMetric[] }[] = [];
+  const sample = (): void => {
+    if (metrics.length >= SELFTEST_METRICS.maxSamples) return;
+    metrics.push({ atMs: Date.now() - t0, contents: webContents.getAllWebContents().length, processes: app.getAppMetrics() });
+  };
+  const metricsTimer = flag('selftest-metrics') ? setInterval(sample, SELFTEST_METRICS.intervalMs) : undefined;
+  if (metricsTimer !== undefined) sample();
+  w.once('closed', () => clearInterval(metricsTimer));
   // What the page did, in order: the report carries it, and it is all a timed-out run has to show for itself.
   const note = (event: string, detail = '') => { selftestLog.push((Date.now() - t0) + 'ms ' + event + (detail ? ' (' + detail + ')' : '')); };
   const wc = w.webContents;
@@ -640,9 +674,14 @@ function selftest(w: BrowserWindow, dir: string) {
     // `--selftest-js=<file>`: an async function body run in the page (with `npm run dev`, window.pokebonk is the App).
     const js = arg('selftest-js');
     const script = js ? await w.webContents.executeJavaScript(`(async () => { ${readFileSync(js, 'utf8')} })()`, true).catch((e) => ({ error: String(e) })) : undefined;
+    clearInterval(metricsTimer);
+    if (metricsTimer !== undefined) sample();
     const report = { splashGoneMs, splashPage: await readSplashPage(), script, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, url: w.webContents.getURL(),
       gpuFeatures: app.getGPUFeatureStatus(), gpu: await app.getGPUInfo('complete').then((g: any) => ({ active: g.gpuDevice?.find((d: any) => d.active)?.deviceString, gl: g.auxAttributes?.glImplementationParts })).catch(() => null), webgl };
-    const loaded = { loaded: true, events: selftestLog, ...report };
+    const measurements = metricsTimer === undefined ? undefined : {
+      samples: metrics, capped: metrics.length >= SELFTEST_METRICS.maxSamples, work: selftestWork,
+    };
+    const loaded = { loaded: true, events: selftestLog, measurements, ...report };
     if (selftestDeadline) clearTimeout(selftestDeadline);
     selftestDeadline = undefined;
     writeFileSync(join(dir, 'report.json'), JSON.stringify(loaded, null, 2));

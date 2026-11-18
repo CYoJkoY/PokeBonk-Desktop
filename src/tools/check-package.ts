@@ -45,7 +45,7 @@ const archive = isAbsolute(argument) ? argument : resolve(ROOT, argument);
 const paths = listPackage(archive).map((path) => path.split(sep).join('/'));
 const entrypoints = ['main', 'preload', 'discord', 'updater', 'text'].map((name) => `/out/${name}.js`);
 // The flat src/ modules the entrypoints import; nothing else may ship under out/.
-const modules = ['bridge', 'coalesced-task', 'config', 'discord-frames', 'distribution', 'navigation', 'settings', 'window-state']
+const modules = ['boot-watch', 'bridge', 'coalesced-task', 'config', 'discord-frames', 'distribution', 'navigation', 'settings', 'window-state']
   .map((name) => `/out/${name}.js`);
 // The loading and offline pages' scripts (src/pages).
 const pageScripts = /^[/]out[/]pages[/][^/]+[.]js$/;

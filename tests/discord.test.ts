@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test';
 import { createServer, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { DiscordFrames, MAX_RPC_PAYLOAD } from '../src/discord-frames';
+import { DiscordFrames, encodeFrame, MAX_RPC_PAYLOAD } from '../src/discord-frames';
 import { DiscordPresence } from '../src/discord';
 import { isRecord } from '../src/config';
 
@@ -32,6 +32,22 @@ test('IPC rejects invalid lengths before accepting a payload', () => {
   }
 });
 
+test('IPC encoder writes one exact frame including UTF-8 byte lengths', () => {
+  const value = { evt: 'READY', text: 'PokéBonk' };
+  const encoded = encodeFrame(1, value);
+  expect(encoded.readInt32LE(0)).toBe(1);
+  expect(encoded.readInt32LE(4)).toBe(Buffer.byteLength(JSON.stringify(value)));
+  expect([...new DiscordFrames().read(encoded)]).toEqual([{ op: 1, data: value }]);
+  expect([...new DiscordFrames().read(Buffer.concat([encoded, encoded]))]).toEqual([
+    { op: 1, data: value }, { op: 1, data: value },
+  ]);
+});
+
+test('IPC encoder rejects values without JSON or over the bounded payload', () => {
+  expect(() => encodeFrame(1, undefined)).toThrow();
+  expect(() => encodeFrame(1, 'x'.repeat(MAX_RPC_PAYLOAD))).toThrow('too large');
+});
+
 test('IPC bounds large fragmented frames and rejects malformed JSON', () => {
   const input = frame(1, 'x'.repeat(MAX_RPC_PAYLOAD - 2));
   const parser = new DiscordFrames();
@@ -58,7 +74,7 @@ async function withPeer(run: (peer: { path: string; clients: Socket[]; messages:
     clients.push(socket);
     const parser = new DiscordFrames();
     socket.on('error', () => {});
-    socket.on('data', data => messages.push(...parser.read(Buffer.from(data))));
+    socket.on('data', data => messages.push(...parser.read(data)));
   });
   await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
   try { await run({ path, clients, messages }); } finally {
