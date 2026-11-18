@@ -35,9 +35,7 @@ export function frameProbe(config: FrameProbeConfig): string {
 }
 
 export function frameStats(intervals: readonly number[], budgetMs: number): Record<string, number> {
-  if (intervals.length === 0 || intervals.some(value => !Number.isFinite(value) || value <= 0)) {
-    throw new Error('Frame intervals must be a nonempty list of positive finite numbers');
-  }
+  assertIntervals(intervals);
   if (!Number.isFinite(budgetMs) || budgetMs <= 0) throw new Error('Frame budget must be positive');
   const sorted = [...intervals].sort((left, right) => left - right);
   const percentile = (fraction: number): number => sorted[Math.ceil(sorted.length * fraction) - 1];
@@ -50,4 +48,25 @@ export function frameStats(intervals: readonly number[], budgetMs: number): Reco
     overBudget: intervals.filter(value => value > budgetMs * 1.5).length,
     over50Ms: intervals.filter(value => value > 50).length, averageFps: 1000 / mean,
   };
+}
+
+export type FrameSpike = { atMs: number; ms: number };
+
+/** Intervals above `thresholdMs`, with the capture time at which each one starts. */
+export function frameSpikes(intervals: readonly number[], thresholdMs: number): FrameSpike[] {
+  assertIntervals(intervals);
+  if (!Number.isFinite(thresholdMs) || thresholdMs <= 0) throw new Error('Frame spike threshold must be positive');
+  const spikes: FrameSpike[] = [];
+  let elapsedMs = 0;
+  for (const ms of intervals) {
+    if (ms > thresholdMs) spikes.push({ atMs: Math.round(elapsedMs), ms: Math.round(ms * 10) / 10 });
+    elapsedMs += ms;
+  }
+  return spikes;
+}
+
+function assertIntervals(intervals: readonly number[]): void {
+  if (intervals.length === 0 || intervals.some(value => !Number.isFinite(value) || value <= 0)) {
+    throw new Error('Frame intervals must be a nonempty list of positive finite numbers');
+  }
 }

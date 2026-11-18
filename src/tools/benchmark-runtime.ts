@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { electronBinary } from './electron-binary';
-import { FRAME_PROBE_DEFAULTS, frameProbe, frameStats } from './frame-probe';
+import { FRAME_PROBE_DEFAULTS, frameProbe, frameSpikes, frameStats } from './frame-probe';
 import { readJson, record } from './json';
 import { ROOT } from './repo-root';
 
@@ -94,6 +94,7 @@ function summarize(): void {
     gpu: report.gpu, renderer: report.webgl, screen: frames.screen,
     validForegroundSample: frames.lostFocus === false && frames.hidden === false && frames.capped === false && measurements.capped === false,
     frames: frameStats(intervals, config.budgetMs), work: measurements.work,
+    longFrames: frameSpikes(intervals, 50),
     peakSampledWorkingSetKiB: Math.max(...memory.map(sample => sample.workingSetKiB)),
     peakSampledPrivateKiB: memory.reduce<number | null>((peak, sample) =>
       peak === null || sample.privateKiB === null ? null : Math.max(peak, sample.privateKiB), 0),
