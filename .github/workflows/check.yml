@@ -1,12 +1,21 @@
 name: Check
-on: [push, pull_request]
+# Un push a una rama con PR abierto dispara `push` y `pull_request`: la matriz entera corría dos veces por commit y
+# duplicaba la cola de macOS. Las ramas de trabajo se comprueban en su PR; `main` sigue comprobándose al recibir el merge.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   verify:
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        # `macos-latest` es macOS 26 arm64 y GitHub avisa de restricciones de capacidad para arm64: los trabajos
+        # esperaban en cola más de 15 minutos y se cancelaban sin ejecutar un solo paso. La imagen x64 equivalente
+        # (el DMG se publica universal, así que el shell se comprueba en las dos arquitecturas) se adquiere siempre.
+        os: [windows-latest, macos-26-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
