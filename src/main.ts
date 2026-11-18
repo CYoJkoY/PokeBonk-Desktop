@@ -639,6 +639,18 @@ async function readSplashPage(): Promise<unknown> {
   })()`, true).catch(() => null);
 }
 
+/**
+ * The screenshot is a diagnostic aside: the report carries everything the smoke check reads. A runner whose viz
+ * backend cannot composite (macOS CI: `UnknownVizError`) rejects `capturePage`, and the report is already on disk.
+ */
+async function captureScreen(w: BrowserWindow, file: string): Promise<void> {
+  try {
+    writeFileSync(file, (await w.webContents.capturePage()).toPNG());
+  } catch (error) {
+    console.warn('[selftest] could not write ' + file, error);
+  }
+}
+
 function selftest(w: BrowserWindow, dir: string) {
   mkdirSync(dir, { recursive: true });
   // With --splash: the loading screen at 0.6, 2 and 4 s (splash-*.png) and how long it took to give way to the menu.
@@ -663,7 +675,8 @@ function selftest(w: BrowserWindow, dir: string) {
     void splash?.view.webContents.capturePage().then((img) => writeFileSync(join(dir, `splash-${ms}.png`), img.toPNG())).catch(() => {});
   }, ms);
   const gone = setInterval(() => { if (!splash) { clearInterval(gone); splashGoneMs = Date.now() - t0; } }, 50);
-  w.webContents.once('did-finish-load', () => setTimeout(async () => {
+  /** Builds the report, then ends the client. A rejection in here must never leave the process running. */
+  const finish = async (): Promise<void> => {
     const webgl = await w.webContents.executeJavaScript(`(() => {
       const gl = document.createElement('canvas').getContext('webgl2', { powerPreference: 'high-performance' });
       const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
@@ -685,9 +698,17 @@ function selftest(w: BrowserWindow, dir: string) {
     if (selftestDeadline) clearTimeout(selftestDeadline);
     selftestDeadline = undefined;
     writeFileSync(join(dir, 'report.json'), JSON.stringify(loaded, null, 2));
-    writeFileSync(join(dir, 'screen.png'), (await w.webContents.capturePage()).toPNG());
+    await captureScreen(w, join(dir, 'screen.png'));
     quitting = true;
     app.exit(0);
+  };
+  w.webContents.once('did-finish-load', () => setTimeout(() => {
+    void finish().catch((error: unknown) => {
+      // Without this exit the client kept retrying its offline page for minutes after the harness gave up.
+      console.error('[selftest] the report could not be completed', error);
+      quitting = true;
+      app.exit(4);
+    });
   }, Number(arg('selftest-wait') ?? 12000)));
 }
 

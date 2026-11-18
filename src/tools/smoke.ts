@@ -4,7 +4,7 @@
  * does not answer, and the loading screen. Every local page runs a compiled `<script src>`, so its CSP has to allow it and
  * the relative path has to resolve. Everything it produces stays under `out/`.
  */
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { join, resolve } from 'node:path';
@@ -102,6 +102,16 @@ function clientLog(output: string): string {
   }
 }
 
+/**
+ * A client that ignores its deadline has to go, and so do its pipes: SIGTERM left the process retrying for minutes,
+ * and the open pipes kept this harness alive after the failure, long past the point where the job could report it.
+ */
+function killClient(child: ChildProcess): void {
+  child.kill('SIGKILL');
+  child.stdout?.destroy();
+  child.stderr?.destroy();
+}
+
 /** Why a run produced no usable report: the self-test deadline, a crash, or a kill. */
 function failureDetail(output: string, code: number | null): string {
   const report = join(output, 'report.json');
@@ -135,17 +145,20 @@ async function runClient({ url, output, probe, wait = 1000, splash = false }: Cl
   for (const stream of [child.stdout, child.stderr]) {
     stream.on('data', (chunk: Buffer) => { log.write(chunk); process.stderr.write(chunk); });
   }
-  const code = await new Promise<number | null>((exited, failed) => {
-    const timer = setTimeout(() => {
-      child.kill();
-      failed(new Error(`Electron smoke test exceeded ${CLIENT_TIMEOUT_MS / 1000} s: ${failureDetail(output, null)}`));
-    }, CLIENT_TIMEOUT_MS);
-    child.once('error', (error) => { clearTimeout(timer); failed(error); });
-    child.once('exit', (exitCode) => { clearTimeout(timer); exited(exitCode); });
-  });
-  log.end();
-  assert.equal(code, 0, `Electron exited with a failure: ${failureDetail(output, code)}`);
-  return readJson(join(output, 'report.json'), 'report.json');
+  try {
+    const code = await new Promise<number | null>((exited, failed) => {
+      const timer = setTimeout(() => {
+        killClient(child);
+        failed(new Error(`Electron smoke test exceeded ${CLIENT_TIMEOUT_MS / 1000} s: ${failureDetail(output, null)}`));
+      }, CLIENT_TIMEOUT_MS);
+      child.once('error', (error) => { clearTimeout(timer); failed(error); });
+      child.once('exit', (exitCode) => { clearTimeout(timer); exited(exitCode); });
+    });
+    assert.equal(code, 0, `Electron exited with a failure: ${failureDetail(output, code)}`);
+    return readJson(join(output, 'report.json'), 'report.json');
+  } finally {
+    log.end();
+  }
 }
 
 function checkBridgeReport(report: Record<string, unknown>, script: Record<string, unknown>): void {
