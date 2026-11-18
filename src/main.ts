@@ -414,7 +414,8 @@ function watchBoot(w: BrowserWindow) {
     onProgress: (p, label) => { if (splash === observed) splashSet(p, label); },
     onScreen: () => {
       splashSet(1, tr(observed.lang, 'starting'));
-      setTimeout(() => { if (splash === observed) hideSplash(w); }, 350);
+      // A navigation inside the fade resets the same splash object to 0.04; the old timer must not hide the new load.
+      setTimeout(() => { if (splash === observed && splash.p >= 1) hideSplash(w); }, 350);
     },
     onAsks: () => { if (splash === observed) hideSplash(w); },
     onTimeout: () => { if (splash === observed) hideSplash(w); },
