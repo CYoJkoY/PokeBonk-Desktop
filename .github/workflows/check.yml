@@ -18,8 +18,9 @@ jobs:
         os: [windows-latest, macos-26-intel, ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      # v5 runs on the Node 24 runtime the runners now force for v4, which removes the deprecation notice.
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: '26.13.1'
       - uses: oven-sh/setup-bun@v2
