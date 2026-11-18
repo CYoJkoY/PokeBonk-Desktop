@@ -20,6 +20,7 @@
     "smoke": "bun run build && node out/tools/smoke.js",
     "benchmark:state": "bun run build && node out/tools/benchmark-state.js",
     "benchmark:runtime": "bun run build && node out/tools/benchmark-runtime.js",
+    "benchmark:discord": "bun run build && node out/tools/benchmark-discord.js",
     "verify:package": "bun run build && node out/tools/check-package.js",
     "verify:vulkan": "bun run build && node out/tools/check-vulkan.js",
     "start": "bun run build && electron .",

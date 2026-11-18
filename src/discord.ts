@@ -8,7 +8,7 @@
  */
 import { connect, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { DiscordFrames } from './discord-frames';
+import { DiscordFrames, encodeFrame } from './discord-frames';
 import { isRecord } from './config';
 
 /**
@@ -40,14 +40,6 @@ function sockets(): string[] {
   const subs = ['', 'app/com.discordapp.Discord', 'app/com.discordapp.DiscordCanary', 'snap.discord', 'snap.discord-canary', '.flatpak/dev.vencord.Vesktop/xdg-run'];
   for (let i = 0; i < 10; i++) for (const b of bases) for (const s of subs) out.push(join(b, s, `discord-ipc-${i}`));
   return [...new Set(out)];
-}
-
-function frame(op: number, data: unknown) {
-  const body = Buffer.from(JSON.stringify(data), 'utf8');
-  const head = Buffer.alloc(8);
-  head.writeInt32LE(op, 0);
-  head.writeInt32LE(body.length, 4);
-  return Buffer.concat([head, body]);
 }
 
 export class DiscordPresence {
@@ -116,7 +108,7 @@ export class DiscordPresence {
   }
 
   private send(op: number, data: unknown) {
-    try { this.sock?.write(frame(op, data)); } catch { this.close(true); }
+    try { this.sock?.write(encodeFrame(op, data)); } catch { this.close(true); }
   }
 
   private connect() {
@@ -140,7 +132,11 @@ export class DiscordPresence {
         this.frames = new DiscordFrames();
         // A peer can accept a socket without ever completing the handshake.
         this.connectionTimer = setTimeout(() => { if (this.sock === s) this.close(true); }, this.timeoutMs);
-        s.on('data', (d) => { if (this.sock === s) this.read(Buffer.from(d)); });
+        s.on('data', (d) => {
+          if (this.sock !== s) return;
+          const chunk = typeof d === 'string' ? Buffer.from(d, 'utf8') : d;
+          this.read(chunk);
+        });
         this.send(OP_HANDSHAKE, { v: 1, client_id: this.appId });
       });
       s.on('error', () => { /* close handles both connection and stream failures */ });
