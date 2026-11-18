@@ -40,7 +40,10 @@ jobs:
         include:
           - os: windows-latest
             target: --win
-          - os: macos-latest
+          - os: macos-26-intel
+            # `macos-latest` is macOS 26 arm64, and GitHub reports capacity restrictions for arm64: this job waited in the
+            # queue for 15 minutes and was cancelled without running a step. The x64 image is always acquired, and
+            # electron-builder.yml still produces a universal DMG on it; check.yml runs on the same runner.
             # ASCII bundle name: with «é» the helpers end up NFD and CFBundleName NFC, and the app crashes on launch (issue #5).
             target: --mac -c.productName=PokeBonk
           - os: ubuntu-latest
