@@ -40,5 +40,25 @@ If allocation or frame spikes belong to game assets/simulation, the next impleme
 
 - Stage 1 implemented: `bun run benchmark:runtime` uses the existing isolated self-test. `--selftest-metrics` samples process metrics once per second, up to 600 samples; frame capture uses a bounded 36,000-element typed array. `--duration`, `--warmup`, `--hz`, `--app`, `--url` and `--setup` support controlled comparisons. Focus loss, visibility and sample caps are explicit validity fields. No timers or samples are added to normal play.
 - Initial Windows baseline: Intel Iris Xe / ANGLE D3D11, 60 Hz, 1280x720 outer window, 1266x686 content DIP at 1.25 scale, 2 s warm-up + 8 s capture. 480 intervals: median 16.7 ms, P95 16.8 ms, P99 16.9 ms, standard deviation 0.124 ms; zero over-budget or >50 ms intervals. Sampled peak private bytes 314,812 KiB; settled private bytes 234,908 KiB. Boot reads 7, splash writes 9, settled WebContents 1. Raw report: `out/runtime-benchmark-1795007679009/`. This is the first baseline run, not a repeated comparison.
-- TypeScript and 55 tests / 176 assertions pass; Electron bridge, offline and splash smoke flows pass. Frozen install and the clean-code structural checker pass. Stages 2-4 are pending.
+- Stage 2 implemented: `src/discord-frames.ts` encodes a frame directly into one 8-byte-header-plus-body buffer, and the inbound parser consumes complete frames in place. `bun run benchmark:discord` measures 3 to 1 Buffer allocations per frame, 12,200,000 to 6,100,000 allocated bytes over 20,000 frames, and removes the concatenation copy entirely; encoded bytes are identical, including UTF-8 lengths.
+- Stage 3 implemented: `src/boot-watch.ts` owns one cancellable poll with generation checks. Navigation, splash removal, screen discovery, an interactive load, timeout and window close stop it; an in-flight read cannot emit after cancellation. `splashSet` does not repeat an unchanged progress-and-label IPC write. The splash still closes after its fade, so this is not a permanent splash-renderer leak fix.
+- Stage 4 Windows comparison, local WebGL fixture (2 s warm-up, 12 s capture, three alternating runs):
+
+| Version | P95 (ms) | P99 (ms) | Std. dev. (ms) | Over 50 ms | Settled private (KiB) |
+| --- | --- | --- | --- | --- | --- |
+| Baseline `db077aa` | 16.9-17.2 | 17.3 | 0.174-0.275 | 0 | 231,972-236,540 |
+| Candidate | 16.9-17.1 | 17.1-17.3 | 0.177-0.226 | 0 | 231,980-236,248 |
+
+- Stage 4 Windows comparison, live `https://pokebonk.com` (10 s warm-up, 22 s capture, alternating pairs):
+
+| Version | P95 (ms) | P99 (ms) | Std. dev. (ms) | Over 50 ms | Boot reads / splash writes | Settled private (KiB) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Baseline B1 | 16.9 | 17.2 | 0.186 | 0 | 12 / 8 | 737,136 |
+| Candidate C1 | 16.9 | 17.1 | 0.151 | 0 | 21 / 7 | 733,584 |
+| Baseline B2 | 16.9 | 17.0 | 0.144 | 0 | 2 / 4 | 720,864 |
+| Candidate C2 | 16.9 | 17.1 | 0.142 | 0 | 9 / 5 | 735,948 |
+
+- The live pairs show no repeatable reduction in steady memory or frame variation, and all runs had zero intervals above 50 ms. Earlier live candidates without those long frames were not reproducible as a baseline difference. Boot work also varies with page timing: candidate reads were higher in both final pairs, so Stage 3 is an ownership and duplicate-work fix, not a demonstrated startup-speed win.
+- The stable live memory total is dominated by the GPU process (about 578 MiB) and the game tab (about 105 MiB); Browser and Utility together were about 57 MiB. The desktop shell cannot release the game's textures, geometry or simulation state without the game repository.
+- TypeScript and 63 tests / 207 assertions pass; Electron bridge, offline and splash smoke flows pass. The Discord allocation benchmark and clean-code structural checker pass. Stages 1-3 are implemented; Stage 4 measured the shell tradeoff and established that gameplay memory and frame pacing require the owning game source.
 - No new player setting or dependency. Diagnostic policy is established in `SELFTEST_METRICS`, `FRAME_PROBE_DEFAULTS` and `BENCHMARK` before their consumers.
