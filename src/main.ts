@@ -4,7 +4,7 @@
  * the browser settings the players can't get right by themselves: the dedicated GPU, hardware acceleration always on,
  * no throttling in the background or behind another window, real fullscreen and a window of its own.
  */
-import { app, BrowserWindow, dialog, Menu, powerSaveBlocker, screen, session, shell, WebContentsView, type WebContents } from 'electron';
+import { app, BrowserWindow, dialog, Menu, powerSaveBlocker, screen, session, shell, webContents, WebContentsView, type WebContents } from 'electron';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -31,6 +31,8 @@ const SELFTEST = arg('selftest');
 /** What the self-test window did, in order, and the timer that ends it when the page never loads. */
 const selftestLog: string[] = [];
 let selftestDeadline: ReturnType<typeof setTimeout> | undefined;
+const SELFTEST_METRICS = { intervalMs: 1000, maxSamples: 600 } as const;
+const selftestWork = { bootReads: 0, splashWrites: 0 };
 // Diagnostics never read or overwrite a player's profile or live window settings.
 if (SELFTEST) {
   const dir = SELFTEST, profile = resolve(dir, 'profile');
@@ -355,6 +357,7 @@ function showSplash(w: BrowserWindow, lang: Lang, onReady?: () => void) {
 function splashSet(p: number, label?: string) {
   if (!splash || p < splash.p) return;
   splash.p = p;
+  if (SELFTEST) selftestWork.splashWrites++;
   void splash.view.webContents.executeJavaScript(`window.pb && pb.set(${p.toFixed(3)}, ${JSON.stringify(label ?? '')})`).catch(() => {});
 }
 /** Fades the loading screen out and gives the keyboard back to the game. */
@@ -381,6 +384,7 @@ function watchBoot(w: BrowserWindow) {
   const observed = splash;
   const tick = async () => {
     if (!observed || splash !== observed || w.isDestroyed() || !sameSite(wc.getURL())) return;
+    if (SELFTEST) selftestWork.bootReads++;
     const s = await wc.executeJavaScript(`(() => {
       const ui = document.getElementById('ui');
       const ld = ui && ui.querySelector(':scope > .loading');
@@ -617,6 +621,14 @@ function selftest(w: BrowserWindow, dir: string) {
   mkdirSync(dir, { recursive: true });
   // With --splash: the loading screen at 0.6, 2 and 4 s (splash-*.png) and how long it took to give way to the menu.
   const t0 = Date.now();
+  const metrics: { atMs: number; contents: number; processes: Electron.ProcessMetric[] }[] = [];
+  const sample = (): void => {
+    if (metrics.length >= SELFTEST_METRICS.maxSamples) return;
+    metrics.push({ atMs: Date.now() - t0, contents: webContents.getAllWebContents().length, processes: app.getAppMetrics() });
+  };
+  const metricsTimer = flag('selftest-metrics') ? setInterval(sample, SELFTEST_METRICS.intervalMs) : undefined;
+  if (metricsTimer !== undefined) sample();
+  w.once('closed', () => clearInterval(metricsTimer));
   // What the page did, in order: the report carries it, and it is all a timed-out run has to show for itself.
   const note = (event: string, detail = '') => { selftestLog.push((Date.now() - t0) + 'ms ' + event + (detail ? ' (' + detail + ')' : '')); };
   const wc = w.webContents;
@@ -640,9 +652,14 @@ function selftest(w: BrowserWindow, dir: string) {
     // `--selftest-js=<file>`: an async function body run in the page (with `npm run dev`, window.pokebonk is the App).
     const js = arg('selftest-js');
     const script = js ? await w.webContents.executeJavaScript(`(async () => { ${readFileSync(js, 'utf8')} })()`, true).catch((e) => ({ error: String(e) })) : undefined;
+    clearInterval(metricsTimer);
+    if (metricsTimer !== undefined) sample();
     const report = { splashGoneMs, splashPage: await readSplashPage(), script, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome, url: w.webContents.getURL(),
       gpuFeatures: app.getGPUFeatureStatus(), gpu: await app.getGPUInfo('complete').then((g: any) => ({ active: g.gpuDevice?.find((d: any) => d.active)?.deviceString, gl: g.auxAttributes?.glImplementationParts })).catch(() => null), webgl };
-    const loaded = { loaded: true, events: selftestLog, ...report };
+    const measurements = metricsTimer === undefined ? undefined : {
+      samples: metrics, capped: metrics.length >= SELFTEST_METRICS.maxSamples, work: selftestWork,
+    };
+    const loaded = { loaded: true, events: selftestLog, measurements, ...report };
     if (selftestDeadline) clearTimeout(selftestDeadline);
     selftestDeadline = undefined;
     writeFileSync(join(dir, 'report.json'), JSON.stringify(loaded, null, 2));

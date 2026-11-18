@@ -23,6 +23,8 @@ bun start
 
 `bun run smoke` opens local fixtures in the real Electron runtime, checks the preload bridge and writes isolated diagnostics under `out/`; `node out/tools/smoke.js <path-to-executable>` runs the same flows against a packaged build, which is what the `Release` workflow checks on macOS. `bun run selftest` diagnoses the live game with an isolated profile and always ends: `--selftest-deadline=<ms>` (120 s by default) writes a report with `loaded: false` and exits non-zero when the page never finishes loading. Neither replaces gameplay testing.
 
+`bun run benchmark:runtime` measures a local WebGL fixture with a fixed 1280x720 window, recording frame intervals and per-process memory under `out/`. Use `--duration=60000 --hz=60` for a longer sample, `--app=<baseline-checkout>` for a comparison, or `--url=https://pokebonk.com --warmup=10000` for an isolated live-game capture. `--setup=<script>` runs an async function body in the page before warm-up, for a repeatable scenario. The JSON summary flags focus loss and hidden/capped samples; only compare foreground runs at the same settings. Raw samples remain in `report.json`. The frame timestamps measure renderer callback pacing, not physical screen presentation. See [the optimization plan](docs/OPTIMIZATION.md) for stages, acceptance and gameplay requirements.
+
 ### Layout
 
 Flat by design: one level of source folders, everything else at the root.
